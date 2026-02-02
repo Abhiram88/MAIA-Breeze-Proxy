@@ -1,0 +1,7 @@
+{
+  "name": "breeze-proxy",
+  "type": "module",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": { "express": "^4.19.2" }
+}

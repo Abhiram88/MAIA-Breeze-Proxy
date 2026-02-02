@@ -1,0 +1,9 @@
+breeze_connect
+pytz
+Flask==3.0.3
+flask-cors==4.0.1
+requests==2.32.3
+google-cloud-secret-manager==2.20.2
+supabase==2.6.0
+google-genai==0.7.0
+gunicorn==22.0.0
