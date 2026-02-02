@@ -203,5 +203,7 @@ def get_historical_data():
 
 if __name__ == "__main__":
     # Use PORT environment variable for Cloud Run compatibility
-    port = int(os.environ.get("PORT", 8081))
-    app.run(debug=False, host="0.0.0.0", port=port)
+    port = int(os.environ.get("PORT", 8080))
+    # Debug mode should be False in production (Cloud Run)
+    debug_mode = os.environ.get("FLASK_DEBUG", "False").lower() in ("true", "1", "yes")
+    app.run(debug=debug_mode, host="0.0.0.0", port=port)
