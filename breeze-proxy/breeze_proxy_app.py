@@ -39,6 +39,10 @@ def initialize_breeze():
             breeze = None
     return breeze
 
+@app.route("/", methods=["GET"])
+def root():
+    return jsonify({"status": "ok", "message": "Breeze proxy is running"}), 200
+
 @app.route("/breeze/health", methods=["GET"])
 def health_check():
     return jsonify({"status": "ok", "message": "Breeze proxy is running"})
@@ -198,4 +202,6 @@ def get_historical_data():
         return jsonify({"error": f"Breeze API error fetching historical data: {e}"}), 500
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+    # Use PORT environment variable for Cloud Run compatibility
+    port = int(os.environ.get("PORT", 8081))
+    app.run(debug=False, host="0.0.0.0", port=port)
