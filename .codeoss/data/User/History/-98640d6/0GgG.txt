@@ -1,0 +1,5 @@
+flask
+flask-cors
+breeze_connect
+google-cloud-secret-manager
+requests

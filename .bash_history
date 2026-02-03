@@ -1,49 +1,3 @@
-        } finally {
-          inflightGlobal -= 1;
-          inflightLane[pickedLane] -= 1;
-          // Continue pumping if work remains
-          setImmediate(pump);
-        }
-      })();
-    }
-  } finally {
-    pump._running = false;
-  }
-};
-pump._running = false;
-
-// periodic refill/pump
-setInterval(() => {
-  refillTokens();
-  pump();
-}, 250);
-
-/**
- * scheduleRequest() - central API for all Breeze calls
- */
-const scheduleRequest = ({ key, lane, ttlMs, timeoutMs, fetcher }) => {
-  // Cache first
-  const cached = cacheGet(key);
-  if (cached) {
-    return Promise.resolve({
-      ok: true,
-      data: cached.value,
-      meta: { lane, cache_hit: true, age_ms: nowMs() - cached.fetchedAt, duration_ms: 0 },
-    });
-  }
-
-  // Dedupe inflight
-  const existing = inflight.get(key);
-  if (existing) return existing;
-
-  if (rejectForQueuePressure(lane)) {
-    const p = Promise.reject(new HttpError(429, "PROXY_OVERLOADED", "Proxy overloaded. Try later.", { retry_after_s: 2 }));
-    inflight.set(key, p);
-    // remove immediately to avoid poisoning dedupe
-    inflight.delete(key);
-    return p;
-  }
-
   const p = new Promise((resolve, reject) => {
     const task = {
       key,
@@ -508,3 +462,40 @@ gh repo create breeze-proxy-maia --public --source=. --push
 gh auth login
 git config --global credential.helper store
 git init
+~/.local/bin/git-filter-repo --force --path .cache --invert-paths
+git log --all -- .cache
+git push origin main --force
+git remote add origin https://github.com/Abhiram88/MAIA-Breeze-Proxy.git
+git remote -v
+git push -u origin main --force
+git pull
+git status
+git fetch origin copilot/fix-404-error-on-deployment
+git pull
+git merge origin/copilot/fix-404-error-on-deployment
+git rebase origin/copilot/fix-404-error-on-deployment
+git status
+# fix files
+git rebase --continue
+git checkout copilot/fix-404-error-on-deployment
+git status
+clear
+gcloud run deploy maia-breeze-proxy-service   --image gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service   --platform managed   --region us-central1   --allow-unauthenticated
+gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
+ls Dockerfile
+cd ~/breeze-proxy
+ls Dockerfile
+gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
+gcloud run deploy maia-breeze-proxy-service   --image gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service   --platform managed   --region us-central1   --allow-unauthenticated
+cd Market-Intelligence-Testing/breeze-proxy
+gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
+cd Market-Intelligence-Testing/breeze-proxy
+cd ..
+cd Market-Intelligence-Testing/breeze-proxy
+gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
+find ~ -type d -name "breeze-proxy"
+cd /home/challapalli_abhiram/breeze-proxy
+gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
+gcloud run deploy maia-breeze-proxy-service --image gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service --platform managed --region us-central1 --allow-unauthenticated
+gcloud secrets versions access latest --secret="BREEZE_PROXY_ADMIN_KEY"
+git remote -v

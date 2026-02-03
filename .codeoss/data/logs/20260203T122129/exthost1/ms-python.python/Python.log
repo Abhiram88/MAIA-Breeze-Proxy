@@ -1,0 +1,28 @@
+2026-02-03 12:21:39.199 [warning] Dir "/home/challapalli_abhiram/.pixi/envs" is not watchable (directory does not exist)
+2026-02-03 12:21:42.120 [info] Skipping ActivatedEnv Detection:  process.env.VSCODE_CLI !== '1'
+2026-02-03 12:21:42.388 [info] Running installed packages checker:  {
+  id: '/bin/python',
+  sysPrefix: '/usr',
+  envType: 'Global',
+  envName: '',
+  envPath: '',
+  path: '/bin/python',
+  architecture: 3,
+  sysVersion: '3.12.3 (main, Nov  6 2025, 13:44:16) [GCC 13.3.0]',
+  version: {
+    raw: '3.12.3',
+    major: 3,
+    minor: 12,
+    patch: 3,
+    build: [],
+    prerelease: [ 'final', '0' ]
+  },
+  displayName: 'Python 3.12.3 64-bit',
+  detailedDisplayName: 'Python 3.12.3 64-bit',
+  type: undefined
+} /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/installed_check.py /home/challapalli_abhiram/breeze-proxy/requirements.txt
+2026-02-03 12:21:42.388 [info] > /bin/python /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/installed_check.py ./breeze-proxy/requirements.txt
+2026-02-03 12:21:42.401 [info] Python interpreter path: /bin/python
+2026-02-03 12:21:42.883 [info] > pyenv which python
+2026-02-03 12:21:42.883 [info] cwd: .
+2026-02-03 12:21:45.632 [info] Starting Jedi language server for challapalli_abhiram.

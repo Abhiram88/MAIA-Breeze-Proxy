@@ -1,0 +1,8 @@
+Starting background process...
+Background process started with PID 8491
+[INFO] 2026-02-02 18:02:04.488 PM -- [CoderAgentExecutor] Overriding workspace path to: /home/challapalli_abhiram
+[ERROR] 2026-02-02 18:02:04.494 PM -- Warning: unexpected file /home/challapalli_abhiram/.gemini/extensions/extension-enablement.json in extensions directory.
+[ERROR] 2026-02-02 18:02:04.496 PM -- Warning: unexpected file /home/challapalli_abhiram/.gemini/extensions/extension-enablement.json in extensions directory.
+[INFO] 2026-02-02 18:02:04.498 PM -- Loading extension: vertex (version: 0.1.0)
+(node:8491) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
