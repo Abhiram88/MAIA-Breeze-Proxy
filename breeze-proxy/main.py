@@ -8,14 +8,16 @@ from typing import Any, Dict, Optional, Tuple, List
 import requests
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-
-from google.cloud import secretmanager
+from dotenv import load_dotenv
 
 from supabase import create_client, Client
 
 # Vertex Gemini (server-side)
 from google import genai
 from google.genai import types
+
+# Load environment variables from .env file
+load_dotenv()
 
 # ----------------------------
 # App
@@ -51,21 +53,16 @@ HTTP_TIMEOUT_S = float(os.environ.get("HTTP_TIMEOUT_S", "25"))
 # ----------------------------
 _secret_cache: Dict[str, str] = {}
 
-def _require_project_id():
-    if not GCP_PROJECT_ID:
-        raise ValueError("GCP_PROJECT_ID is not set on the service.")
-
 def get_secret(secret_name: str) -> str:
-    """Read Secret Manager secret value; cached per instance."""
+    """Read secret value from environment variables; cached per instance."""
     if secret_name in _secret_cache:
         return _secret_cache[secret_name]
-
-    _require_project_id()
-    client = secretmanager.SecretManagerServiceClient()
-    name = f"projects/{GCP_PROJECT_ID}/secrets/{secret_name}/versions/latest"
-    resp = client.access_secret_version(request={"name": name})
-    val = resp.payload.data.decode("utf-8")
-    _secret_cache[secret_name] = val
+    
+    # Load from environment variables (loaded from .env file)
+    val = os.environ.get(secret_name, "")
+    if val:
+        _secret_cache[secret_name] = val
+    
     return val
 
 # ----------------------------

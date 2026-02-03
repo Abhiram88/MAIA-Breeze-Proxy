@@ -3,10 +3,13 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from flask_socketio import SocketIO
 from breeze_connect import BreezeConnect
-from google.cloud import secretmanager
 import os
 import json
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 # Initialize CORS for the entire app, allowing all origins.
@@ -26,49 +29,20 @@ DAILY_SESSION_TOKEN = None
 
 
 def get_secret(secret_name):
-    """Fetch secrets from Google Secret Manager with local caching."""
+    """Fetch secrets from environment variables with local caching."""
     if secret_name in _secret_cache:
         return _secret_cache[secret_name]
     
-    project_id = os.environ.get("GCP_PROJECT_ID")
-    if not project_id:
-        # Attempt to get project ID from gcloud config
-        try:
-            import subprocess
-            project_id = subprocess.check_output(["gcloud", "config", "get-value", "project"], text=True).strip()
-            os.environ["GCP_PROJECT_ID"] = project_id # Cache it for future calls
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            project_id = "919207294606" # Fallback
-    logger.info(f"Fetching secret: {secret_name} from project: {project_id}")
-
-    if not project_id:
-        logger.warning("GCP_PROJECT_ID not set. Falling back to local environment variables.")
-        val = os.environ.get(secret_name)
-        if val:
-            logger.info(f"Loaded secret '{secret_name}' from environment variable.")
-            _secret_cache[secret_name] = val
-        else:
-            logger.error(f"Failed to find secret '{secret_name}' in environment variables.")
-        return val
-
-    try:
-        client = secretmanager.SecretManagerServiceClient()
-        name = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
-        response = client.access_secret_version(request={"name": name})
-        val = response.payload.data.decode("UTF-8")
+    # Load from environment variables (loaded from .env file)
+    val = os.environ.get(secret_name)
+    
+    if val:
+        logger.info(f"Loaded secret '{secret_name}' from environment variable.")
         _secret_cache[secret_name] = val
-        logger.info(f"Successfully fetched secret: {secret_name}")
-        return val
-    except Exception as e:
-        logger.error(f"Failed to fetch secret '{secret_name}' from Secret Manager: {e}")
-        logger.info(f"Attempting to fall back to environment variable for '{secret_name}'...")
-        val = os.environ.get(secret_name)
-        if val:
-            logger.info(f"Successfully loaded secret '{secret_name}' from fallback environment variable.")
-            _secret_cache[secret_name] = val
-        else:
-            logger.error(f"Failed to find secret '{secret_name}' in fallback environment variables.")
-        return val
+    else:
+        logger.error(f"Failed to find secret '{secret_name}' in environment variables.")
+    
+    return val
 
 def initialize_breeze():
     global breeze_client
