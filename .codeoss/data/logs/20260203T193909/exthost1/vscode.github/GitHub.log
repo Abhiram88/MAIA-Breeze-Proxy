@@ -1,0 +1,3 @@
+2026-02-03 19:39:18.947 [info] Log level: Info
+2026-02-03 19:39:19.924 [warning] [GitHubBranchProtectionProvider][updateRepositoryBranchProtection] Failed to update repository branch protection: No GitHub authentication session available.
+2026-02-03 19:39:22.464 [warning] [GitHubSourceControlHistoryItemDetailsProvider][_loadAssignableUsers] Failed to load assignable user(s) for Abhiram88/MAIA-Breeze-Proxy: Error: No GitHub authentication session available.
