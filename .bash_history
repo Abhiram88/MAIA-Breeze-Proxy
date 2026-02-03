@@ -1,26 +1,4 @@
 
-  inflight.set(key, p);
-  return p;
-};
-
-/* =========================
-   BREEZE UPSTREAM CALLS
-========================= */
-const breezeCall = async (endpoint, payload, timeoutMs = 6000) => {
-  if (!BREEZE_APP_KEY || !BREEZE_SECRET_KEY) {
-    throw new HttpError(500, "BREEZE_KEYS_MISSING", "Breeze keys not configured");
-  }
-  if (!BREEZE_SESSION_TOKEN) {
-    throw new HttpError(401, "BREEZE_SESSION_EXPIRED", "Breeze session token not set");
-  }
-
-  const body = JSON.stringify(payload ?? {});
-  const ts = isoTimestamp();
-  const checksum = sha256Hex(ts + body + BREEZE_SECRET_KEY);
-
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), timeoutMs);
-
   let response;
   let text = "";
   const url = `https://api.icicidirect.com/breezeapi/api/v1/${endpoint}`;
@@ -498,3 +476,34 @@ find ~ -type d -name "breeze-proxy"
 cd /home/challapalli_abhiram/breeze-proxy
 gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
 gcloud run deploy maia-breeze-proxy-service --image gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service --platform managed --region us-central1 --allow-unauthenticated
+git add .
+git status
+git commit "API routing issue"
+git commit -m "API routing issue"
+git config --global user.name "Abhiram Challapalli"
+git config --global user.email "challapalli.abhiram@gmail.com"
+git commit -m "API routing issue"
+git push
+git rm --cached .git-credentials
+echo ".git-credentials" >> .gitignore
+git commit --amend
+git commit --amend --no-edit
+git push -u origin copilot/fix-404-error-on-deployment --force
+find ~ -type d -name "breeze-proxy"
+cd /home/challapalli_abhiram/breeze-proxy
+gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
+gcloud run deploy maia-breeze-proxy-service --source . --platform managed --region us-central1 --allow-unauthenticated
+gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
+cd /home/challapalli_abhiram/breeze-proxy
+gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
+cd /home/challapalli_abhiram/breeze-proxy
+gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
+cd /home/challapalli_abhiram/breeze-proxy
+gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
+gcloud run deploy maia-breeze-proxy-service --source . --platform managed --region us-central1 --allow-unauthenticated
+cd /home/challapalli_abhiram/breeze-proxy
+gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
+gcloud run deploy maia-breeze-proxy-service --source . --platform managed --region us-central1 --allow-unauthenticated
+curl -X POST https://maia-breeze-proxy-service-919207294606.us-central1.run.app/api/breeze/admin/api-session   -H "Content-Type: application/json"   -H "X-Proxy-Admin-Key: Waterloo1214$"   -d '{"api_session": "54592611"}'
+git version -v
+git -v

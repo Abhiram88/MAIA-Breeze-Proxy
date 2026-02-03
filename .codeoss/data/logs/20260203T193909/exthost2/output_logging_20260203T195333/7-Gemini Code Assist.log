@@ -538,3 +538,17 @@ I0203 20:05:35.438040    6215 conn_opt.go:55] jsonrpc2: --> request #17: textDoc
 I0203 20:05:35.438265    6215 conn_opt.go:96] jsonrpc2: <-- result #17: textDocument/codeAction: null
 I0203 20:05:36.415172    6215 conn_opt.go:55] jsonrpc2: --> request #18: textDocument/documentLink: {"textDocument":{"uri":"file:///home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py"}}
 I0203 20:05:36.415437    6215 conn_opt.go:96] jsonrpc2: <-- result #18: textDocument/documentLink: null
+I0203 20:05:56.021384    6215 life_cycle.go:423] codeReportEvery: recomputing codereport metric
+I0203 20:05:56.021504    6215 conn_opt.go:80] jsonrpc2: <-- notif: telemetry/event: {"event_name":"cloudcode.aipp.languageserver.codereport","event_data":{},"metadata":{"config_use_cloudcode_api":"true","config_use_rest":"false","total_ai_chars_added_chat":"0","total_ai_chars_added_completion":"0","total_ai_chars_added_generation":"0","total_chars_added":"10763","total_original_ai_chars_added_chat":"0","total_original_ai_chars_added_completion":"0","total_original_ai_chars_added_generation":"0","trigger":"fixed_interval_1m0s","update_channel":"prod","using_channel_defaults":"true"}}
+I0203 20:05:56.023934    6215 conn_opt.go:53] jsonrpc2: --> notif: telemetry/sendEvents: <truncated 1161 bytes>
+I0203 20:10:45.513142    6215 conn_opt.go:53] jsonrpc2: --> notif: telemetry/sendEvents: <truncated 817 bytes>
+I0203 20:11:45.518063    6215 conn_opt.go:53] jsonrpc2: --> notif: telemetry/sendEvents: <truncated 813 bytes>
+I0203 20:13:56.021187    6215 life_cycle.go:454] aiCharsReportEvery: compute and send aicharsreport metric
+I0203 20:13:56.022374    6215 conn_opt.go:80] jsonrpc2: <-- notif: telemetry/event: {"event_name":"cloudcode.aipp.languageserver.aicharsreport","event_data":{},"metadata":{"config_use_cloudcode_api":"true","config_use_rest":"false","edit_type":"DELETE","language":"python","time_interval_index":"2","total_chars":"1154","update_channel":"prod","using_channel_defaults":"true","whitespace_chars":"300"}}
+I0203 20:13:56.023026    6215 life_cycle.go:387] codeReportBasicEvery: recomputing codereportbasic metric
+I0203 20:13:56.023960    6215 conn_opt.go:80] jsonrpc2: <-- notif: telemetry/event: {"event_name":"cloudcode.aipp.languageserver.aicharsreport","event_data":{},"metadata":{"config_use_cloudcode_api":"true","config_use_rest":"false","edit_type":"OTHER","language":"python","time_interval_index":"2","total_chars":"1447","update_channel":"prod","using_channel_defaults":"true","whitespace_chars":"344"}}
+I0203 20:13:56.025049    6215 conn_opt.go:80] jsonrpc2: <-- notif: telemetry/event: {"event_name":"cloudcode.aipp.languageserver.codereportbasic","event_data":{},"metadata":{"config_use_cloudcode_api":"true","config_use_rest":"false","total_ai_chars_added_completion":"0","total_ai_chars_added_generation":"0","total_chars_added":"38","trigger":"fixed_interval_10m0s","update_channel":"prod","using_channel_defaults":"true"}}
+I0203 20:13:56.030010    6215 conn_opt.go:53] jsonrpc2: --> notif: telemetry/sendEvents: <truncated 974 bytes>
+I0203 20:13:56.032888    6215 conn_opt.go:53] jsonrpc2: --> notif: telemetry/sendEvents: <truncated 973 bytes>
+I0203 20:13:56.033115    6215 conn_opt.go:53] jsonrpc2: --> notif: telemetry/sendEvents: <truncated 997 bytes>
+E0203 20:13:56.059145    6215 metrics.go:196] error setting metric metadata since metric event is not set

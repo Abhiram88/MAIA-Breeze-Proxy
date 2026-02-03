@@ -12,8 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-# Initialize CORS for the entire app, allowing all origins.
-# This is the most robust way to handle CORS and pre-flight requests.
+# Robust CORS: Handles both standard HTTP and SocketIO handshakes
 CORS(app, resources={r"/*": {"origins": "*"}})
 socketio = SocketIO(app, cors_allowed_origins="*")
 
@@ -21,18 +20,17 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
 # --- Global State & Cache ---
 _secret_cache = {}
 breeze_client = None
 DAILY_SESSION_TOKEN = None
-
 
 def get_secret(secret_name):
     """Fetch secrets from environment variables with local caching."""
     if secret_name in _secret_cache:
         return _secret_cache[secret_name]
     
+<<<<<<< Updated upstream
     # Load from environment variables (loaded from .env file)
     val = os.environ.get(secret_name)
     
@@ -43,20 +41,36 @@ def get_secret(secret_name):
         logger.error(f"Failed to find secret '{secret_name}' in environment variables.")
     
     return val
+=======
+    # Use environment variable or fallback to your project ID
+    project_id = os.environ.get("GCP_PROJECT_ID", "919207294606")
+    
+    try:
+        client = secretmanager.SecretManagerServiceClient()
+        name = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
+        response = client.access_secret_version(request={"name": name})
+        val = response.payload.data.decode("UTF-8")
+        _secret_cache[secret_name] = val
+        logger.info(f"Successfully fetched secret: {secret_name}")
+        return val
+    except Exception as e:
+        logger.error(f"Failed to fetch secret '{secret_name}': {e}")
+        # Final fallback to standard environment variables (e.g. for local .env)
+        return os.environ.get(secret_name)
+>>>>>>> Stashed changes
 
 def initialize_breeze():
+    """Initializes the BreezeConnect client only if needed."""
     global breeze_client
     if breeze_client is None:
         try:
-            # This will check Secret Manager first, then your 'export' variables
             api_key = get_secret("BREEZE_API_KEY") 
-            
             if not api_key:
-                logger.error("API Key is empty! Check your exports or Secret Manager.")
+                logger.error("API Key is missing from Secret Manager/Env.")
                 return None
 
             breeze_client = BreezeConnect(api_key=api_key)
-            logger.info(f"BreezeConnect initialized with key ending in: {api_key[-4:]}")
+            logger.info(f"BreezeConnect initialized (Key ending in: {api_key[-4:]})")
         except Exception as e:
             logger.error(f"Breeze initialization error: {e}")
     return breeze_client
@@ -67,14 +81,18 @@ def ensure_breeze_session():
     if not client:
         return None, jsonify({"error": "Breeze client not initialized"}), 500
     
+    # If we have a token but client hasn't been "logged in" yet
     if not client.session_key and DAILY_SESSION_TOKEN:
         try:
-            client.generate_session(api_secret=get_secret("BREEZE_API_SECRET"), session_token=DAILY_SESSION_TOKEN)
-            logger.info("Breeze session regenerated.")
+            client.generate_session(
+                api_secret=get_secret("BREEZE_API_SECRET"), 
+                session_token=DAILY_SESSION_TOKEN
+            )
+            logger.info("Breeze session regenerated successfully.")
         except Exception as e:
-            return None, jsonify({"error": f"Session invalid: {e}"}), 401
+            return None, jsonify({"error": f"Session generation failed: {e}"}), 401
     elif not client.session_key:
-        return None, jsonify({"error": "Breeze session token not set. Use /admin/api-session"}), 401
+        return None, jsonify({"error": "Session token missing. Use /api/breeze/admin/api-session"}), 401
     
     return client, None, None
 
@@ -82,89 +100,72 @@ def ensure_breeze_session():
 
 @app.route("/api/", methods=["GET"])
 def root_health():
-    """Root health check for Cloud Run and general monitoring."""
+    """Root health check for Cloud Run service monitoring."""
     return jsonify({
         "status": "ok",
         "service": "breeze-proxy",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "session_active": bool(DAILY_SESSION_TOKEN)
     })
 
 @app.route("/api/breeze/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "session_active": bool(DAILY_SESSION_TOKEN)})
+    return jsonify({
+        "status": "ok", 
+        "session_active": bool(DAILY_SESSION_TOKEN),
+        "client_ready": breeze_client is not None
+    })
 
-@app.route("/api/breeze/admin/api-session", methods=["POST"])
+@app.route("/api/breeze/admin/api-session", methods=["POST", "OPTIONS"])
 def set_session():
-    """Handshake from UI to activate the daily data pipe."""
+    """Endpoint to update the daily session token from the UI."""
     global DAILY_SESSION_TOKEN
+    
+    # Handle CORS preflight automatically via Flask-CORS, but defined for clarity
+    if request.method == "OPTIONS":
+        return "", 200
+
     data = request.get_json() or {}
     api_session = data.get("api_session")
 
-    # 1. Validate Admin Key
+    # 1. Admin Authorization
     provided_key = request.headers.get('X-Proxy-Admin-Key', '').strip()
-    
     ADMIN_KEY = get_secret("BREEZE_PROXY_ADMIN_KEY")
-    if not ADMIN_KEY:
-        return jsonify({"error": "Server Error: BREEZE_PROXY_ADMIN_KEY not loaded"}), 500
-
-    if not secrets.compare_digest(provided_key, ADMIN_KEY.strip()):
-        return jsonify({
-            "error": "Unauthorized",
-            "received": f"|{provided_key}|", 
-            "expected": f"|{ADMIN_KEY.strip()}|"
-        }), 401
+    
+    if not ADMIN_KEY or not secrets.compare_digest(provided_key, ADMIN_KEY.strip()):
+        logger.warning(f"Unauthorized session attempt with key: {provided_key}")
+        return jsonify({"error": "Unauthorized"}), 401
 
     if not api_session:
-        return jsonify({"error": "api_session is required"}), 400
+        return jsonify({"error": "api_session token is required"}), 400
     
-    # 2. Initialize and Exchange Token
+    # 2. Token Exchange
     client = initialize_breeze()
     if not client:
-        return jsonify({"error": "Breeze client not initialized. Check BREEZE_API_KEY."}), 500
+        return jsonify({"error": "Breeze client initialization failed"}), 500
+        
     try:
-        api_secret = get_secret("BREEZE_API_SECRET")
-        if not api_secret:
-            return jsonify({"error": "Server Error: BREEZE_API_SECRET not loaded"}), 500
-
-        logger.info(f"Attempting to generate session with api_session: {api_session}")
-
-        # The generate_session method does not return a value.
-        # It modifies the client object in-place and raises an exception on failure.
         client.generate_session(
-            api_secret=api_secret,
+            api_secret=get_secret("BREEZE_API_SECRET"),
             session_token=api_session
         )
-
-        # If we reach here, the session is active.
-        # Store the token for subsequent requests within this proxy.
         DAILY_SESSION_TOKEN = api_session
-        
-        logger.info("Successfully generated and activated new session.")
-
-        return jsonify({
-            "status": "success",
-            "message": "Daily session activated"
-        }), 200
-
+        logger.info("Daily session activated and stored.")
+        return jsonify({"status": "success", "message": "Daily session activated"}), 200
     except Exception as e:
-        logger.error(f"Failed to generate session: {e}", exc_info=True)
-        return jsonify({
-            "error": "Failed to generate session",
-            "details": str(e),
-            "api_secret_used": get_secret("BREEZE_API_SECRET")[-4:] if get_secret("BREEZE_API_SECRET") else "Not found",
-            "api_session_used": api_session
-        }), 500
-
+        logger.error(f"Failed to generate session: {e}")
+        return jsonify({"error": "Failed to activate session", "details": str(e)}), 500
 
 @app.route("/api/breeze/quotes", methods=["POST"])
 def get_quotes():
+    """Fetch real-time quotes for a specific stock."""
     client, err_resp, status_code = ensure_breeze_session()
-    if err_resp: 
-        return err_resp, status_code
+    if err_resp: return err_resp, status_code
 
     data = request.get_json() or {}
     stock_code = data.get("stock_code")
-    if not stock_code: return jsonify({"error": "stock_code required"}), 400
+    if not stock_code: 
+        return jsonify({"error": "stock_code required"}), 400
 
     try:
         raw_data = client.get_quotes(
@@ -175,62 +176,55 @@ def get_quotes():
         
         if raw_data and raw_data.get("Success"):
             row = raw_data["Success"][0]
+            # Mapping internal breeze keys to clean frontend names
             formatted = {
                 "last_traded_price": float(row.get("ltp", 0)),
                 "change": float(row.get("change", 0)),
                 "percent_change": float(row.get("ltp_percent_change", 0)),
                 "high": float(row.get("high", 0)),
                 "low": float(row.get("low", 0)),
-                "open": float(row.get("open", 0)),
                 "volume": float(row.get("total_quantity_traded", 0)),
-                "previous_close": float(row.get("previous_close", 0)),
-                "best_bid_price": float(row.get("best_bid_price", 0)),
-                "best_bid_quantity": float(row.get("best_bid_quantity", 0)),
-                "best_offer_price": float(row.get("best_offer_price", 0)),
-                "best_offer_quantity": float(row.get("best_offer_quantity", 0))
+                "previous_close": float(row.get("previous_close", 0))
             }
             return jsonify({"Success": formatted}), 200
-        return jsonify({"error": "No data returned from Breeze"}), 404
+        return jsonify({"error": "Breeze returned no data"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# --- Corrected Market Depth ---
 @app.route("/api/breeze/depth", methods=["POST"])
 def get_depth():
-    # client, err_resp, status_code = ensure_breeze_session() 
-    # Use the 3-variable unpack we fixed earlier
+    """Fetch Level 2 Market Depth (Buy/Sell Ladders)."""
     client, err_resp, status_code = ensure_breeze_session()
-    if err_resp: 
-        return err_resp, status_code
+    if err_resp: return err_resp, status_code
 
     data = request.get_json() or {}
     stock_code = data.get("stock_code")
     if not stock_code:
-        return jsonify({"error": "stock_code is required"}), 400
+        return jsonify({"error": "stock_code required"}), 400
 
     try:
-        # THE FIX: use get_market_depth2 instead of get_market_depth
+        # Using get_market_depth2 as per current Breeze API standards
         res = client.get_market_depth2(
             stock_code=stock_code,
             exchange_code=data.get("exchange_code", "NSE"),
-            product_type=data.get("product_type", "cash")
+            product_type="cash"
         )
         return jsonify(res), 200
     except Exception as e:
-        logger.error(f"Market Depth error: {e}")
+        logger.error(f"Market Depth Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/breeze/historical", methods=["POST"])
 def get_historical():
+    """Fetch historical OHLC data."""
     client, err_resp, status_code = ensure_breeze_session()
-    if err_resp: 
-        return err_resp, status_code
+    if err_resp: return err_resp, status_code
 
     data = request.get_json() or {}
     try:
         res = client.get_historical_data(
             stock_code=data.get("stock_code"),
-            exchange_code="NSE",
+            exchange_code=data.get("exchange_code", "NSE"),
             product_type="cash",
             from_date=data.get("from_date"),
             to_date=data.get("to_date"),
@@ -240,45 +234,29 @@ def get_historical():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# --- SocketIO Handlers ---
+
 @socketio.on('connect')
 def handle_connect():
-    logger.info('Client connected')
+    logger.info('Frontend Socket connected')
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    logger.info('Client disconnected')
+    logger.info('Frontend Socket disconnected')
 
-# --- Application Startup Configuration ---
+# --- Startup Execution ---
+
 if __name__ == "__main__":
-    # Get port from environment variable, default to 8080 for Cloud Run compatibility
+    # Cloud Run injected port (8080) or local fallback
     port = int(os.environ.get("PORT", 8080))
-
-    # Log startup information
+    
     logger.info("=" * 70)
-    logger.info(f"🚀 Starting Breeze Proxy Server")
-    logger.info("=" * 70)
-    logger.info(f"Port: {port}")
-    logger.info(f"Host: 0.0.0.0 (all interfaces)")
-    logger.info(f"")
-    logger.info(f"Health check: http://localhost:{port}/api/")
-    logger.info(f"Breeze health: http://localhost:{port}/api/breeze/health")
-    logger.info(f"Admin session: http://localhost:{port}/api/breeze/admin/api-session")
-    logger.info(f"")
-    logger.info(f"API Endpoints:")
-    logger.info(f"  - POST /api/breeze/quotes")
-    logger.info(f"  - POST /api/breeze/depth")
-    logger.info(f"  - POST /api/breeze/historical")
+    logger.info(f"🚀 MAIA BREEZE PROXY STARTING")
+    logger.info(f"Port: {port} | Env: {'Production' if not os.environ.get('DEBUG') else 'Debug'}")
     logger.info("=" * 70)
     
-    # Run the Flask app
-    # Note: For production deployment, use Gunicorn or similar WSGI server
     try:
-        app.run(
-            host="0.0.0.0",  # Listen on all interfaces
-            port=port,        # Use configured port
-            debug=False       # Production mode
-        )
-    except OSError as e:
-        logger.error(f"❌ ERROR: {e}")
-        import sys
-        sys.exit(1)
+        # host="0.0.0.0" is mandatory for Cloud Run to accept outside traffic
+        socketio.run(app, host="0.0.0.0", port=port, debug=False, allow_unsafe_werkzeug=True)
+    except Exception as e:
+        logger.error(f"❌ Critical Server Failure: {e}")

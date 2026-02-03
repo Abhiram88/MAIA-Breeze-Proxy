@@ -119,3 +119,133 @@ fatal: no email was given and auto-detection is disabled
 2026-02-03 20:05:35.088 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [3ms]
 2026-02-03 20:05:35.115 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [2ms]
 2026-02-03 20:05:35.119 [info] > git status -z -uall [19ms]
+2026-02-03 20:05:40.182 [info] > git ls-files --stage -- breeze-proxy/breeze_proxy_app.py [13ms]
+2026-02-03 20:05:40.192 [info] > git ls-tree -l HEAD -- breeze-proxy/breeze_proxy_app.py [12ms]
+2026-02-03 20:05:40.193 [info] > git cat-file -s 9a42665c1419a03047b9cb00c1a2757bf51903ff [2ms]
+2026-02-03 20:05:40.282 [info] > git show --textconv HEAD:breeze-proxy/breeze_proxy_app.py [12ms]
+2026-02-03 20:05:40.284 [info] > git show --textconv :breeze-proxy/breeze_proxy_app.py [3ms]
+2026-02-03 20:05:43.626 [info] > git ls-files --stage -- breeze-proxy/breeze_proxy_app.py [18ms]
+2026-02-03 20:05:43.638 [info] > git ls-tree -l HEAD -- breeze-proxy/breeze_proxy_app.py [14ms]
+2026-02-03 20:05:43.640 [info] > git cat-file -s 9a42665c1419a03047b9cb00c1a2757bf51903ff [3ms]
+2026-02-03 20:05:43.721 [info] > git show --textconv HEAD:breeze-proxy/breeze_proxy_app.py [13ms]
+2026-02-03 20:05:43.723 [info] > git show --textconv :breeze-proxy/breeze_proxy_app.py [4ms]
+2026-02-03 20:06:04.839 [info] > git ls-files --stage -- breeze-proxy/breeze_proxy_app.py [15ms]
+2026-02-03 20:06:04.851 [info] > git ls-tree -l HEAD -- breeze-proxy/breeze_proxy_app.py [16ms]
+2026-02-03 20:06:04.853 [info] > git cat-file -s 9a42665c1419a03047b9cb00c1a2757bf51903ff [2ms]
+2026-02-03 20:06:04.983 [info] > git show --textconv HEAD:breeze-proxy/breeze_proxy_app.py [20ms]
+2026-02-03 20:06:04.986 [info] > git show --textconv :breeze-proxy/breeze_proxy_app.py [4ms]
+2026-02-03 20:06:30.535 [info] > git show -s --decorate=full --shortstat --format=%H%n%aN%n%aE%n%at%n%ct%n%P%n%D%n%B -z 3e961a8b16794330636e86332198ff518378c6da -- [53ms]
+2026-02-03 20:06:30.550 [info] > git rev-list refs/remotes/origin/copilot/fix-404-error-on-deployment..copilot/fix-404-error-on-deployment [4ms]
+2026-02-03 20:07:34.608 [info] > git config --get commit.template [11ms]
+2026-02-03 20:07:34.609 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [3ms]
+2026-02-03 20:07:34.640 [info] > git status -z -uall [24ms]
+2026-02-03 20:07:34.641 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [15ms]
+2026-02-03 20:07:39.673 [info] > git config --get commit.template [14ms]
+2026-02-03 20:07:39.675 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [4ms]
+2026-02-03 20:07:39.707 [info] > git status -z -uall [21ms]
+2026-02-03 20:07:39.707 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [6ms]
+2026-02-03 20:08:13.261 [info] > git ls-files --stage -- breeze-proxy/breeze_proxy_app.py [27ms]
+2026-02-03 20:08:13.270 [info] > git ls-tree -l HEAD -- breeze-proxy/breeze_proxy_app.py [12ms]
+2026-02-03 20:08:13.273 [info] > git cat-file -s 9a42665c1419a03047b9cb00c1a2757bf51903ff [3ms]
+2026-02-03 20:08:13.356 [info] > git show --textconv HEAD:breeze-proxy/breeze_proxy_app.py [13ms]
+2026-02-03 20:08:13.359 [info] > git show --textconv :breeze-proxy/breeze_proxy_app.py [3ms]
+2026-02-03 20:08:28.653 [info] > git push -u origin copilot/fix-404-error-on-deployment [1780ms]
+2026-02-03 20:08:28.653 [info] remote: error: GH013: Repository rule violations found for refs/heads/copilot/fix-404-error-on-deployment.        
+remote: 
+remote: - GITHUB PUSH PROTECTION        
+remote:   —————————————————————————————————————————        
+remote:     Resolve the following violations before pushing again        
+remote: 
+remote:     - Push cannot contain secrets        
+remote: 
+remote:             
+remote:      (?) Learn how to resolve a blocked push        
+remote:      https://docs.github.com/code-security/secret-scanning/working-with-secret-scanning-and-push-protection/working-with-push-protection-from-the-command-line#resolving-a-blocked-push        
+remote:             
+remote:             
+remote:       —— GitHub OAuth Access Token —————————————————————————        
+remote:        locations:        
+remote:          - commit: 0c68a492c27f6e000bd9fea8b99063d973ef6cbf        
+remote:            path: .git-credentials:1        
+remote:             
+remote:        (?) To push, remove secret from commit(s) or follow this URL to allow the secret.        
+remote:        https://github.com/Abhiram88/MAIA-Breeze-Proxy/security/secret-scanning/unblock-secret/39AqdK0YodVc0rzeg8aAlmlgEEJ        
+remote:             
+remote: 
+remote: 
+To https://github.com/Abhiram88/MAIA-Breeze-Proxy.git
+ ! [remote rejected] copilot/fix-404-error-on-deployment -> copilot/fix-404-error-on-deployment (push declined due to repository rule violations)
+error: failed to push some refs to 'https://github.com/Abhiram88/MAIA-Breeze-Proxy.git'
+2026-02-03 20:08:28.681 [info] > git config --get commit.template [12ms]
+2026-02-03 20:08:28.684 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [3ms]
+2026-02-03 20:08:28.714 [info] > git status -z -uall [16ms]
+2026-02-03 20:08:28.718 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [5ms]
+2026-02-03 20:08:28.747 [info] > git blame --root --incremental 0c68a492c27f6e000bd9fea8b99063d973ef6cbf -- breeze-proxy/breeze_proxy_app.py [18ms]
+2026-02-03 20:08:28.750 [info] > git config --get commit.template [4ms]
+2026-02-03 20:08:28.760 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [2ms]
+2026-02-03 20:08:28.782 [info] > git status -z -uall [14ms]
+2026-02-03 20:08:28.784 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [3ms]
+2026-02-03 20:08:29.067 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) refs/heads/copilot/fix-404-error-on-deployment [1ms]
+2026-02-03 20:08:29.307 [info] > git log --format=%H%n%aN%n%aE%n%at%n%ct%n%P%n%D%n%B -z --shortstat --diff-merges=first-parent -n50 --skip=0 --topo-order --decorate=full --stdin [135ms]
+2026-02-03 20:08:29.675 [info] > git check-ignore -v -z --stdin [3ms]
+2026-02-03 20:09:01.924 [info] > git config --get commit.template [14ms]
+2026-02-03 20:09:01.928 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [5ms]
+2026-02-03 20:09:01.964 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [2ms]
+2026-02-03 20:09:01.972 [info] > git status -z -uall [25ms]
+2026-02-03 20:09:02.664 [info] > git check-ignore -v -z --stdin [3ms]
+2026-02-03 20:09:09.115 [info] > git config --get commit.template [15ms]
+2026-02-03 20:09:09.116 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [2ms]
+2026-02-03 20:09:09.155 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [6ms]
+2026-02-03 20:09:09.157 [info] > git status -z -uall [25ms]
+2026-02-03 20:09:19.560 [info] > git config --get commit.template [13ms]
+2026-02-03 20:09:19.561 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [2ms]
+2026-02-03 20:09:19.589 [info] > git status -z -uall [17ms]
+2026-02-03 20:09:19.591 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [5ms]
+2026-02-03 20:09:20.327 [info] > git check-ignore -v -z --stdin [1ms]
+2026-02-03 20:09:36.127 [info] > git config --get commit.template [1ms]
+2026-02-03 20:09:36.162 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [1ms]
+2026-02-03 20:09:36.243 [info] > git status -z -uall [44ms]
+2026-02-03 20:09:36.253 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [19ms]
+2026-02-03 20:09:36.346 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) refs/heads/copilot/fix-404-error-on-deployment [6ms]
+2026-02-03 20:09:36.619 [info] > git log --format=%H%n%aN%n%aE%n%at%n%ct%n%P%n%D%n%B -z --shortstat --diff-merges=first-parent -n50 --skip=0 --topo-order --decorate=full --stdin [176ms]
+2026-02-03 20:11:45.185 [info] > git config --get commit.template [3ms]
+2026-02-03 20:11:45.199 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [3ms]
+2026-02-03 20:11:45.229 [info] > git status -z -uall [15ms]
+2026-02-03 20:11:45.229 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [2ms]
+2026-02-03 20:11:45.257 [info] > git merge-base refs/heads/copilot/fix-404-error-on-deployment refs/remotes/origin/copilot/fix-404-error-on-deployment [5ms]
+2026-02-03 20:11:45.272 [info] > git diff --name-status -z --diff-filter=ADMR 82d8fea92f12e2f7b2b06e68792a39f5071cfc09...refs/remotes/origin/copilot/fix-404-error-on-deployment [3ms]
+2026-02-03 20:11:45.402 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) refs/heads/copilot/fix-404-error-on-deployment [7ms]
+2026-02-03 20:11:45.761 [info] > git log --format=%H%n%aN%n%aE%n%at%n%ct%n%P%n%D%n%B -z --shortstat --diff-merges=first-parent -n50 --skip=0 --topo-order --decorate=full --stdin [256ms]
+2026-02-03 20:11:48.378 [info] > git check-ignore -v -z --stdin [3ms]
+2026-02-03 20:11:50.270 [info] > git config --get commit.template [2ms]
+2026-02-03 20:11:50.286 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [3ms]
+2026-02-03 20:11:50.312 [info] > git status -z -uall [13ms]
+2026-02-03 20:11:50.313 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [2ms]
+2026-02-03 20:18:48.957 [info] > git config --get commit.template [21ms]
+2026-02-03 20:18:48.958 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [4ms]
+2026-02-03 20:18:48.988 [info] > git status -z -uall [16ms]
+2026-02-03 20:18:48.990 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [3ms]
+2026-02-03 20:18:52.612 [info] > git show --textconv :breeze-proxy/breeze_proxy_app.py [10ms]
+2026-02-03 20:18:52.614 [info] > git ls-files --stage -- breeze-proxy/breeze_proxy_app.py [3ms]
+2026-02-03 20:18:52.626 [info] > git cat-file -s 9a42665c1419a03047b9cb00c1a2757bf51903ff [3ms]
+2026-02-03 20:18:53.052 [info] > git blame --root --incremental 82d8fea92f12e2f7b2b06e68792a39f5071cfc09 -- breeze-proxy/breeze_proxy_app.py [5ms]
+2026-02-03 20:18:54.014 [info] > git config --get commit.template [10ms]
+2026-02-03 20:18:54.015 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [2ms]
+2026-02-03 20:18:54.037 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [3ms]
+2026-02-03 20:18:54.038 [info] > git status -z -uall [14ms]
+2026-02-03 20:19:40.615 [info] > git config --get commit.template [11ms]
+2026-02-03 20:19:40.617 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [3ms]
+2026-02-03 20:19:40.637 [info] > git status -z -uall [12ms]
+2026-02-03 20:19:40.639 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [4ms]
+2026-02-03 20:19:45.661 [info] > git config --get commit.template [10ms]
+2026-02-03 20:19:45.662 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [2ms]
+2026-02-03 20:19:45.686 [info] > git status -z -uall [15ms]
+2026-02-03 20:19:45.686 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [2ms]
+2026-02-03 20:20:44.606 [info] > git config --get commit.template [1ms]
+2026-02-03 20:20:44.621 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [2ms]
+2026-02-03 20:20:44.643 [info] > git status -z -uall [13ms]
+2026-02-03 20:20:44.643 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [4ms]
+2026-02-03 20:20:49.665 [info] > git config --get commit.template [10ms]
+2026-02-03 20:20:49.667 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [3ms]
+2026-02-03 20:20:49.688 [info] > git status -z -uall [12ms]
+2026-02-03 20:20:49.690 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [4ms]
