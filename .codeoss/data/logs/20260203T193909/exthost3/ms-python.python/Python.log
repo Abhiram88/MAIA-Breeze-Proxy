@@ -1,0 +1,17 @@
+2026-02-03 20:35:02.424 [warning] Dir "/home/challapalli_abhiram/.pixi/envs" is not watchable (directory does not exist)
+2026-02-03 20:35:06.045 [info] Skipping ActivatedEnv Detection:  process.env.VSCODE_CLI !== '1'
+2026-02-03 20:35:06.116 [info] Python interpreter path: /bin/python
+2026-02-03 20:35:06.428 [info] > pyenv which python
+2026-02-03 20:35:06.428 [info] cwd: .
+2026-02-03 20:35:09.054 [info] Starting Jedi language server for challapalli_abhiram.
+2026-02-03 20:35:37.542 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
+2026-02-03 20:39:54.444 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
+2026-02-03 20:39:56.086 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
+2026-02-03 20:40:01.630 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
+2026-02-03 20:49:44.031 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
+2026-02-03 20:50:39.632 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
+2026-02-03 20:52:12.376 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/.local/lib/python3.12/site-packages/pandas/pyproject.toml
+2026-02-03 20:52:40.469 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
+2026-02-03 20:52:44.668 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
+2026-02-03 20:52:49.104 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
+2026-02-03 20:52:50.740 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py

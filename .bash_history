@@ -1,28 +1,3 @@
-
-  let response;
-  let text = "";
-  const url = `https://api.icicidirect.com/breezeapi/api/v1/${endpoint}`;
-
-  try {
-    response = await fetch(url, {
-      method: "GET", // Breeze docs show GET with JSON body for many endpoints, including quotes/historicalcharts. :contentReference[oaicite:2]{index=2}
-      headers: {
-        "Content-Type": "application/json",
-        "X-Checksum": `token ${checksum}`,
-        "X-Timestamp": ts,
-        "X-AppKey": BREEZE_APP_KEY,
-        "X-SessionToken": BREEZE_SESSION_TOKEN,
-      },
-      body,
-      signal: controller.signal,
-    });
-    text = await response.text();
-  } catch (e) {
-    if (e?.name === "AbortError") {
-      throw new HttpError(504, "UPSTREAM_TIMEOUT", "Breeze upstream timed out");
-    }
-    throw new HttpError(502, "UPSTREAM_NETWORK_ERROR", `Upstream network error: ${e?.message || String(e)}`);
-  } finally {
     clearTimeout(t);
   }
 
@@ -507,3 +482,21 @@ gcloud run deploy maia-breeze-proxy-service --source . --platform managed --regi
 curl -X POST https://maia-breeze-proxy-service-919207294606.us-central1.run.app/api/breeze/admin/api-session   -H "Content-Type: application/json"   -H "X-Proxy-Admin-Key: Waterloo1214$"   -d '{"api_session": "54592611"}'
 git version -v
 git -v
+git reset --hard HEAD
+git pull --tags origin copilot/fix-404-error-on-deployment
+git checkout -- .gitignore
+git pull --tags origin copilot/fix-404-error-on-deployment
+nano .env
+cd breeze-proxy
+pip install -r requirements.txt
+python breeze_proxy_app.py
+cd breeze-proxy
+pip install -r requirements.txt
+curl -X POST https://maia-breeze-proxy-service-919207294606.us-central1.run.app/api/breeze/admin/api-session   -H "Content-Type: application/json"   -H "X-Proxy-Admin-Key: Waterloo1214$"   -d '{"api_session": "54592611"}'
+python breeze_proxy_app.py
+cd /home/challapalli_abhiram/breeze-proxy
+gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
+gcloud run deploy maia-breeze-proxy-service --source . --platform managed --region us-central1 --allow-unauthenticated
+curl -X POST https://maia-breeze-proxy-service-919207294606.us-central1.run.app/api/breeze/admin/api-session   -H "Content-Type: application/json"   -H "X-Proxy-Admin-Key: Waterloo1214$"   -d '{"api_session": "54592611"}'
+git remote -v
+git status

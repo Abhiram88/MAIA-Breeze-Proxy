@@ -1,0 +1,17 @@
+Starting background process...
+Background process started with PID 2785
+[INFO] 2026-02-04 12:37:12.447 PM -- [CoderAgentExecutor] Overriding workspace path to: /home/challapalli_abhiram
+[ERROR] 2026-02-04 12:37:12.453 PM -- Warning: unexpected file /home/challapalli_abhiram/.gemini/extensions/extension-enablement.json in extensions directory.
+[ERROR] 2026-02-04 12:37:12.453 PM -- Warning: unexpected file /home/challapalli_abhiram/.gemini/extensions/extension-enablement.json in extensions directory.
+[INFO] 2026-02-04 12:37:12.454 PM -- Loading extension: vertex (version: 0.1.0)
+(node:2785) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Loading extension: vertex
+[STARTUP] StartupProfiler.flush() called with 2 phases
+[STARTUP] Recording metric for phase: discover_tools duration: 4527.724879
+[STARTUP] Recording metric for phase: initialize_mcp_clients duration: 47.17133600000034
+[INFO] 2026-02-04 12:37:17.283 PM -- [Config] Using Gemini API Key
+[INFO] 2026-02-04 12:37:17.379 PM -- Using InMemoryTaskStore
+[INFO] 2026-02-04 12:37:17.392 PM -- [CoreAgent] Agent Server started on http://localhost:35789
+[INFO] 2026-02-04 12:37:17.392 PM -- [CoreAgent] Agent Card: http://localhost:35789/.well-known/agent-card.json
+[INFO] 2026-02-04 12:37:17.392 PM -- [CoreAgent] Press Ctrl+C to stop the server
