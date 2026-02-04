@@ -24,16 +24,6 @@ _secret_cache = {}
 breeze_client = None
 DAILY_SESSION_TOKEN = None
 
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({
-        "message": "MAIA Breeze Proxy is Running",
-        "endpoints": [
-            "/api/breeze/health",
-            "/api/breeze/quotes"
-        ]
-    }), 200
-
 def get_secret(secret_name):
     """Fetch secrets from environment variables with local caching."""
     if secret_name in _secret_cache:

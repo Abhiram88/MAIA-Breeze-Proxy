@@ -1,19 +1,3 @@
-    clearTimeout(t);
-  }
-
-  // propagate meaningful statuses
-  if (!response.ok) {
-    // Attempt to detect common failure reasons
-    if (response.status === 401 || response.status === 403) {
-      throw new HttpError(401, "BREEZE_UNAUTHORIZED", text || "Unauthorized", { upstream_status: response.status });
-    }
-    if (response.status === 429) {
-      // try honor Retry-After if present
-      const ra = response.headers.get("retry-after");
-      throw new HttpError(429, "UPSTREAM_RATE_LIMIT", text || "Rate limited", {
-        upstream_status: 429,
-        retry_after_s: ra ? Number(ra) : 2,
-      });
     }
     if (response.status >= 500) {
       throw new HttpError(502, "UPSTREAM_5XX", text || "Upstream error", { upstream_status: response.status });
@@ -500,3 +484,21 @@ gcloud run deploy maia-breeze-proxy-service --source . --platform managed --regi
 curl -X POST https://maia-breeze-proxy-service-919207294606.us-central1.run.app/api/breeze/admin/api-session   -H "Content-Type: application/json"   -H "X-Proxy-Admin-Key: Waterloo1214$"   -d '{"api_session": "54592611"}'
 git remote -v
 git status
+git add .
+git status
+git branch
+fit commit -m "test the routing"
+git commit -m "test the routing"
+'git push
+git push
+git branch
+curl -X POST https://maia-breeze-proxy-service-919207294606.us-central1.run.app/breeze/admin/api-session -H "Content-Type: application/json" -H "X-Proxy-Admin-Key: Waterloo1214$" -d '{"api_session": "54605648"}'
+cd /home/challapalli_abhiram/breeze-proxy
+curl -X POST https://maia-breeze-proxy-service-919207294606.us-central1.run.app/breeze/admin/api-session -H "Content-Type: application/json" -H "X-Proxy-Admin-Key: Waterloo1214$" -d '{"api_session": "54605648"}'
+gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
+gcloud run deploy maia-breeze-proxy-service --source . --platform managed --region us-central1 --allow-unauthenticated
+curl -X POST https://maia-breeze-proxy-service-919207294606.us-central1.run.app/api/breeze/admin/api-session   -H "Content-Type: application/json"   -H "X-Proxy-Admin-Key: Waterloo1214$"   -d '{"api_session": "54605648"}'
+gcloud builds submit --tag gcr.io/gen-lang-client-0751458856/maia-breeze-proxy-service .
+gcloud run deploy maia-breeze-proxy-service --source . --platform managed --region us-central1 --allow-unauthenticated
+git status
+git branch

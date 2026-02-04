@@ -1,0 +1,40 @@
+2026-02-04 12:59:36.200 [info] [main] Log level: Info
+2026-02-04 12:59:36.200 [info] [main] Validating found git in: "git"
+2026-02-04 12:59:36.200 [info] [main] Using git "2.43.0" from "git"
+2026-02-04 12:59:36.200 [info] [Model][doInitialScan] Initial repository scan started
+2026-02-04 12:59:36.200 [info] > git rev-parse --show-toplevel [494ms]
+2026-02-04 12:59:36.200 [info] > git rev-parse --git-dir --git-common-dir --show-superproject-working-tree [9ms]
+2026-02-04 12:59:36.200 [info] [Model][openRepository] Opened repository (path): /home/challapalli_abhiram
+2026-02-04 12:59:36.200 [info] [Model][openRepository] Opened repository (real path): /home/challapalli_abhiram
+2026-02-04 12:59:36.200 [info] [Model][openRepository] Opened repository (kind): repository
+2026-02-04 12:59:36.200 [info] > git config --get commit.template [7ms]
+2026-02-04 12:59:36.200 [info] > git rev-parse --show-toplevel [15ms]
+2026-02-04 12:59:36.202 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [4ms]
+2026-02-04 12:59:36.227 [info] > git rev-parse --show-toplevel [19ms]
+2026-02-04 12:59:36.229 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [4ms]
+2026-02-04 12:59:36.238 [info] > git rev-parse --show-toplevel [2ms]
+2026-02-04 12:59:36.246 [info] > git status -z -uall [32ms]
+2026-02-04 12:59:36.287 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [11ms]
+2026-02-04 12:59:36.294 [info] > git rev-parse --show-toplevel [51ms]
+2026-02-04 12:59:36.296 [info] > git config --get commit.template [10ms]
+2026-02-04 12:59:36.302 [info] > git config --get --local branch.copilot/fix-404-error-on-deployment.vscode-merge-base [8ms]
+2026-02-04 12:59:36.325 [info] > git rev-parse --show-toplevel [24ms]
+2026-02-04 12:59:36.346 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/copilot/fix-404-error-on-deployment refs/remotes/copilot/fix-404-error-on-deployment [32ms]
+2026-02-04 12:59:36.347 [info] > git for-each-ref --format=%(refname)%00%(upstream:short)%00%(objectname)%00%(upstream:track)%00%(upstream:remotename)%00%(upstream:remoteref) refs/heads/origin/copilot/fix-404-error-on-deployment refs/remotes/origin/copilot/fix-404-error-on-deployment [39ms]
+2026-02-04 12:59:39.071 [info] > git merge-base refs/heads/copilot/fix-404-error-on-deployment refs/remotes/origin/copilot/fix-404-error-on-deployment [2718ms]
+2026-02-04 12:59:39.079 [info] > git rev-parse --show-toplevel [2748ms]
+2026-02-04 12:59:39.105 [info] > git diff --name-status -z --diff-filter=ADMR d87a9e8ba3f4d26cf54e2d742091755742d58acb...refs/remotes/origin/copilot/fix-404-error-on-deployment [26ms]
+2026-02-04 12:59:39.124 [info] > git rev-parse --show-toplevel [32ms]
+2026-02-04 12:59:39.592 [info] > git status -z -uall [444ms]
+2026-02-04 12:59:39.592 [info] > git for-each-ref --sort -committerdate --format %(refname)%00%(objectname)%00%(*objectname) [421ms]
+2026-02-04 12:59:39.606 [info] > git rev-parse --show-toplevel [413ms]
+2026-02-04 12:59:39.624 [info] > git check-ignore -v -z --stdin [24ms]
+2026-02-04 12:59:39.640 [info] > git rev-parse --show-toplevel [19ms]
+2026-02-04 12:59:39.658 [info] > git rev-parse --show-toplevel [6ms]
+2026-02-04 12:59:39.696 [info] > git rev-parse --show-toplevel [31ms]
+2026-02-04 12:59:39.724 [info] > git rev-parse --show-toplevel [20ms]
+2026-02-04 12:59:39.725 [info] [Model][doInitialScan] Initial repository scan completed - repositories (1), closed repositories (0), parent repositories (0), unsafe repositories (0)
+2026-02-04 12:59:39.755 [info] > git show --textconv :breeze-proxy/breeze_proxy_app.py [18ms]
+2026-02-04 12:59:39.758 [info] > git ls-files --stage -- breeze-proxy/breeze_proxy_app.py [12ms]
+2026-02-04 12:59:39.786 [info] > git cat-file -s 1ff8db7ec573e687e2d377f63484f0fb9b1b983b [21ms]
+2026-02-04 12:59:40.136 [info] > git blame --root --incremental d87a9e8ba3f4d26cf54e2d742091755742d58acb -- breeze-proxy/breeze_proxy_app.py [11ms]
