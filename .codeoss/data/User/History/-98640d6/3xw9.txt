@@ -1,0 +1,10 @@
+flask
+flask-cors
+breeze_connect
+requests
+gunicorn
+python-dotenv
+Flask-SocketIO
+eventlet
+python-engineio
+python-socketio

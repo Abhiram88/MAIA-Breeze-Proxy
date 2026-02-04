@@ -1,0 +1,143 @@
+2026-02-04 13:36:41.825 [warning] Dir "/home/challapalli_abhiram/.pixi/envs" is not watchable (directory does not exist)
+2026-02-04 13:36:45.319 [info] Skipping ActivatedEnv Detection:  process.env.VSCODE_CLI !== '1'
+2026-02-04 13:36:45.325 [info] Python interpreter path: /bin/python
+2026-02-04 13:36:46.558 [info] > pyenv which python
+2026-02-04 13:36:46.558 [info] cwd: .
+2026-02-04 13:36:48.360 [info] Starting Jedi language server for challapalli_abhiram.
+2026-02-04 13:36:57.943 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
+2026-02-04 13:37:30.413 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
+2026-02-04 13:37:57.840 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
+2026-02-04 13:38:37.068 [info] Running installed packages checker:  {
+  id: '/bin/python',
+  sysPrefix: '/usr',
+  envType: 'Global',
+  envName: '',
+  envPath: '',
+  path: '/bin/python',
+  architecture: 3,
+  sysVersion: '3.12.3 (main, Nov  6 2025, 13:44:16) [GCC 13.3.0]',
+  version: {
+    raw: '3.12.3',
+    major: 3,
+    minor: 12,
+    patch: 3,
+    build: [],
+    prerelease: [ 'final', '0' ]
+  },
+  displayName: 'Python 3.12.3 64-bit',
+  detailedDisplayName: 'Python 3.12.3 64-bit',
+  type: undefined
+} /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/installed_check.py /home/challapalli_abhiram/breeze-proxy/requirements.txt
+2026-02-04 13:38:37.068 [info] > /bin/python /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/installed_check.py ./breeze-proxy/requirements.txt
+2026-02-04 13:38:40.526 [info] Running installed packages checker:  {
+  id: '/bin/python',
+  sysPrefix: '/usr',
+  envType: 'Global',
+  envName: '',
+  envPath: '',
+  path: '/bin/python',
+  architecture: 3,
+  sysVersion: '3.12.3 (main, Nov  6 2025, 13:44:16) [GCC 13.3.0]',
+  version: {
+    raw: '3.12.3',
+    major: 3,
+    minor: 12,
+    patch: 3,
+    build: [],
+    prerelease: [ 'final', '0' ]
+  },
+  displayName: 'Python 3.12.3 64-bit',
+  detailedDisplayName: 'Python 3.12.3 64-bit',
+  type: undefined
+} /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/installed_check.py /home/challapalli_abhiram/breeze-proxy/requirements.txt
+2026-02-04 13:38:40.526 [info] > /bin/python /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/installed_check.py ./breeze-proxy/requirements.txt
+2026-02-04 13:38:42.795 [info] Running installed packages checker:  {
+  id: '/bin/python',
+  sysPrefix: '/usr',
+  envType: 'Global',
+  envName: '',
+  envPath: '',
+  path: '/bin/python',
+  architecture: 3,
+  sysVersion: '3.12.3 (main, Nov  6 2025, 13:44:16) [GCC 13.3.0]',
+  version: {
+    raw: '3.12.3',
+    major: 3,
+    minor: 12,
+    patch: 3,
+    build: [],
+    prerelease: [ 'final', '0' ]
+  },
+  displayName: 'Python 3.12.3 64-bit',
+  detailedDisplayName: 'Python 3.12.3 64-bit',
+  type: undefined
+} /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/installed_check.py /home/challapalli_abhiram/breeze-proxy/requirements.txt
+2026-02-04 13:38:42.795 [info] > /bin/python /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/installed_check.py ./breeze-proxy/requirements.txt
+2026-02-04 13:38:45.095 [info] Running installed packages checker:  {
+  id: '/bin/python',
+  sysPrefix: '/usr',
+  envType: 'Global',
+  envName: '',
+  envPath: '',
+  path: '/bin/python',
+  architecture: 3,
+  sysVersion: '3.12.3 (main, Nov  6 2025, 13:44:16) [GCC 13.3.0]',
+  version: {
+    raw: '3.12.3',
+    major: 3,
+    minor: 12,
+    patch: 3,
+    build: [],
+    prerelease: [ 'final', '0' ]
+  },
+  displayName: 'Python 3.12.3 64-bit',
+  detailedDisplayName: 'Python 3.12.3 64-bit',
+  type: undefined
+} /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/installed_check.py /home/challapalli_abhiram/breeze-proxy/requirements.txt
+2026-02-04 13:38:45.096 [info] > /bin/python /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/installed_check.py ./breeze-proxy/requirements.txt
+2026-02-04 13:38:58.839 [info] Running installed packages checker:  {
+  id: '/bin/python',
+  sysPrefix: '/usr',
+  envType: 'Global',
+  envName: '',
+  envPath: '',
+  path: '/bin/python',
+  architecture: 3,
+  sysVersion: '3.12.3 (main, Nov  6 2025, 13:44:16) [GCC 13.3.0]',
+  version: {
+    raw: '3.12.3',
+    major: 3,
+    minor: 12,
+    patch: 3,
+    build: [],
+    prerelease: [ 'final', '0' ]
+  },
+  displayName: 'Python 3.12.3 64-bit',
+  detailedDisplayName: 'Python 3.12.3 64-bit',
+  type: undefined
+} /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/installed_check.py /home/challapalli_abhiram/breeze-proxy/requirements.txt
+2026-02-04 13:38:58.839 [info] > /bin/python /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/installed_check.py ./breeze-proxy/requirements.txt
+2026-02-04 13:39:00.231 [info] Running installed packages checker:  {
+  id: '/bin/python',
+  sysPrefix: '/usr',
+  envType: 'Global',
+  envName: '',
+  envPath: '',
+  path: '/bin/python',
+  architecture: 3,
+  sysVersion: '3.12.3 (main, Nov  6 2025, 13:44:16) [GCC 13.3.0]',
+  version: {
+    raw: '3.12.3',
+    major: 3,
+    minor: 12,
+    patch: 3,
+    build: [],
+    prerelease: [ 'final', '0' ]
+  },
+  displayName: 'Python 3.12.3 64-bit',
+  detailedDisplayName: 'Python 3.12.3 64-bit',
+  type: undefined
+} /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/installed_check.py /home/challapalli_abhiram/breeze-proxy/requirements.txt
+2026-02-04 13:39:00.231 [info] > /bin/python /google/devshell/editor/code-oss-for-cloud-shell/extensions/ms-python.python/python_files/installed_check.py ./breeze-proxy/requirements.txt
+2026-02-04 13:45:58.193 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
+2026-02-04 14:09:33.205 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py

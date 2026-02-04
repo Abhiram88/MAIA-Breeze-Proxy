@@ -1,0 +1,8 @@
+2026-02-04 13:17:01.215 [warning] Dir "/home/challapalli_abhiram/.pixi/envs" is not watchable (directory does not exist)
+2026-02-04 13:17:02.183 [info] Skipping ActivatedEnv Detection:  process.env.VSCODE_CLI !== '1'
+2026-02-04 13:17:02.186 [info] Python interpreter path: /bin/python
+2026-02-04 13:17:05.523 [info] > pyenv which python
+2026-02-04 13:17:05.523 [info] cwd: .
+2026-02-04 13:17:07.451 [info] Starting Jedi language server for challapalli_abhiram.
+2026-02-04 13:20:06.140 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
+2026-02-04 13:20:08.060 [info] Discover tests for workspace name: challapalli_abhiram - uri: /home/challapalli_abhiram/breeze-proxy/breeze_proxy_app.py
