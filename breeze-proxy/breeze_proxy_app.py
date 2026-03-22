@@ -519,7 +519,11 @@ def root_health():
 @app.route("/api/breeze/health", methods=["GET"])
 @cross_origin()
 def health():
-    return jsonify({"status": "ok", "session_active": bool(DAILY_SESSION_TOKEN)})
+    return jsonify({
+        "status": "ok",
+        "session_active": bool(DAILY_SESSION_TOKEN),
+        "session_valid": bool(breeze_client and getattr(breeze_client, 'session_key', None))
+    })
 
 
 # ─────────────────────────────────────────────
@@ -1249,104 +1253,107 @@ def nse_announcements():
         payload = request.get_json(silent=True) or {}
         from_date_str = payload.get('from_date', '')
 
-        # Parse from_date (expects YYYY-MM-DD); cap range at 90 days to avoid huge results
+        # Parse from_date (expects YYYY-MM-DD); cap range at 90 days
         try:
             from_dt = datetime.strptime(from_date_str, '%Y-%m-%d')
         except (ValueError, TypeError):
             from_dt = datetime.utcnow() - timedelta(days=7)
         to_dt = datetime.utcnow()
-        max_from = to_dt - timedelta(days=90)
-        if from_dt < max_from:
-            from_dt = max_from
+        if from_dt < to_dt - timedelta(days=90):
+            from_dt = to_dt - timedelta(days=90)
 
-        # NSE API uses DD-MM-YYYY
-        from_nse = from_dt.strftime('%d-%m-%Y')
-        to_nse = to_dt.strftime('%d-%m-%Y')
+        from_str = from_dt.strftime('%Y-%m-%d')
+        to_str = to_dt.strftime('%Y-%m-%d')
 
-        base_headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://www.nseindia.com/',
+        api_url = get_secret('STOCKINSIGHTS_API_URL') or 'https://stockinsights-ai-main-95a26a0.zuplo.app/api/in/v0/documents/announcement'
+        api_key = get_secret('STOCKINSIGHTS_API_KEY')
+        if not api_key:
+            logger.error('STOCKINSIGHTS_API_KEY not configured')
+            return jsonify({'error': 'StockInsights API key not configured', 'announcements': []}), 500
+
+        params = {
+            'from_date': from_str,
+            'to_date': to_str,
+            'type': 8,  # Contracts/Orders category
         }
-
-        sess = req_lib.Session()
-        sess.headers.update(base_headers)
-
-        # Warm up session cookies by visiting NSE homepage
-        try:
-            sess.get('https://www.nseindia.com', timeout=10)
-        except Exception as warm_err:
-            logger.warning(f'NSE session warmup failed: {warm_err}')
-
-        # Fetch corporate announcements from NSE API
-        api_url = (
-            f'https://www.nseindia.com/api/corporate-announcements'
-            f'?index=equities&from_date={from_nse}&to_date={to_nse}'
-        )
-        resp = sess.get(api_url, timeout=30)
+        headers = {'Authorization': f'Bearer {api_key}'}
+        logger.info(f'StockInsights announcements: {from_str} → {to_str}')
+        resp = req_lib.get(api_url, params=params, headers=headers, timeout=30)
         resp.raise_for_status()
 
-        items = resp.json()
-        if not isinstance(items, list):
-            items = items.get('data', []) if isinstance(items, dict) else []
+        raw = resp.json()
+        # Unwrap common envelope shapes: { data: [...] } or { announcements: [...] } or raw list
+        if isinstance(raw, list):
+            items = raw
+        elif isinstance(raw, dict):
+            items = raw.get('data') or raw.get('announcements') or raw.get('results') or []
+        else:
+            items = []
 
-        # Keywords that indicate an order/contract announcement
+        # Log first item to help with field mapping if needed
+        if items:
+            logger.info(f'StockInsights sample item keys: {list(items[0].keys()) if isinstance(items[0], dict) else type(items[0])}')
+
         ORDER_KEYWORDS = {
             'order', 'contract', 'bagged', 'awarded', 'award', 'secured',
             'win', 'won', 'new business', 'agreement', 'mou', 'loa',
             'letter of award', 'purchase order', 'work order', 'project',
         }
 
-        def _is_order_event(subject: str) -> bool:
-            s_lower = subject.lower()
-            return any(kw in s_lower for kw in ORDER_KEYWORDS)
+        def _is_order_event(text: str) -> bool:
+            t = text.lower()
+            return any(kw in t for kw in ORDER_KEYWORDS)
 
-        def _parse_date(raw: str) -> str:
-            """Convert NSE date formats to YYYY-MM-DD."""
-            raw = (raw or '').strip()
-            for fmt in ('%d-%b-%Y', '%d-%b-%y', '%d/%m/%Y', '%d-%m-%Y'):
+        def _parse_date(raw_date: str) -> str:
+            raw_date = (raw_date or '').strip()
+            for fmt in ('%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d', '%d-%b-%Y', '%d/%m/%Y', '%d-%m-%Y'):
                 try:
-                    return datetime.strptime(raw, fmt).strftime('%Y-%m-%d')
+                    return datetime.strptime(raw_date[:len(fmt)], fmt).strftime('%Y-%m-%d')
                 except (ValueError, TypeError):
                     pass
-            # ISO format: "2024-06-24T14:30:00+05:30" -> "2024-06-24"
-            if len(raw) >= 10 and raw[4:5] == '-' and raw[7:8] == '-':
-                return raw[:10]
+            if len(raw_date) >= 10 and raw_date[4:5] == '-':
+                return raw_date[:10]
             return from_dt.strftime('%Y-%m-%d')
 
         announcements = []
         for item in items:
-            subject = str(item.get('subject', '') or item.get('desc', ''))
+            if not isinstance(item, dict):
+                continue
+            # Subject/headline — filter to order-type events
+            subject = str(
+                item.get('subject') or item.get('headline') or item.get('title') or
+                item.get('description') or item.get('desc') or ''
+            )
             if not _is_order_event(subject):
-                continue  # skip non-order events to avoid flooding the AI pipeline
+                continue
 
-            company_name = str(item.get('sm_name', '') or item.get('company', '')).strip()
-            symbol = str(item.get('symbol', '') or '').strip()
-            an_dt = str(item.get('sort_date', '') or item.get('an_dt', ''))
-            attachment = str(item.get('attchmntFile', '') or '').strip()
+            company_name = str(
+                item.get('company_name') or item.get('company') or item.get('sm_name') or ''
+            ).strip()
+            symbol = str(
+                item.get('symbol') or item.get('nse_symbol') or item.get('ticker') or
+                item.get('nse_ticker') or ''
+            ).strip()
+            pub_raw = str(
+                item.get('published_date') or item.get('date') or item.get('an_dt') or
+                item.get('sort_date') or item.get('created_at') or ''
+            )
+            source_link = str(
+                item.get('source_link') or item.get('url') or item.get('attachment_url') or
+                item.get('link') or item.get('attchmntFile') or ''
+            ).strip()
 
             if not company_name or not symbol:
                 continue
 
-            pub_date = _parse_date(an_dt)
-
-            if attachment:
-                if attachment.endswith('.xml'):
-                    source_link = f'https://nsearchives.nseindia.com/corporate/xbrl/{attachment}'
-                else:
-                    source_link = f'https://nsearchives.nseindia.com/corporate/ixbrl/{attachment}'
-            else:
-                source_link = ''
-
             announcements.append({
                 'company_name': company_name,
                 'nse_ticker': symbol,
-                'published_date': pub_date,
+                'published_date': _parse_date(pub_raw),
                 'source_link': source_link,
             })
 
-        logger.info(f'NSE announcements: {len(announcements)} order events ({from_nse} → {to_nse})')
+        logger.info(f'NSE announcements via StockInsights: {len(announcements)} order events from {len(items)} total')
         return jsonify({'announcements': announcements})
 
     except Exception as e:
