@@ -1247,6 +1247,7 @@ def nse_announcements():
     if request.method == 'OPTIONS':
         return jsonify(success=True)
     try:
+        import requests
         from datetime import datetime, timedelta
 
         payload = request.get_json(silent=True) or {}
