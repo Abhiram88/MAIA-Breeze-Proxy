@@ -194,7 +194,7 @@ def initialize_ai_clients():
         try:
             gemini_api_key = get_secret("GEMINI_API_KEY")
             if not gemini_api_key:
-                logger.error("GEMINI_API_KEY is missing! Set it as a Cloud Run env var or in .env / env.yaml.")
+                logger.error("GEMINI_API_KEY is missing! Add it to env.yaml or .env file.")
             else:
                 ai_client = genai.Client(api_key=gemini_api_key)
                 logger.info("Gemini AI client initialized (API key).")
