@@ -1316,12 +1316,19 @@ def nse_announcements():
                 skipped += 1
                 continue
             ai = rec.get('ai_insights') or {}
+            summary = ai.get('summary_text') or ai.get('summary_header') or ''
+            # Append key_points bullet list to summary so Gemini has more extraction context
+            key_points = ai.get('key_points') or ai.get('highlights') or []
+            if key_points and isinstance(key_points, list):
+                bullets = ' '.join(f'• {p}' for p in key_points if p)
+                if bullets:
+                    summary = f"{summary} {bullets}".strip()
             announcements.append({
                 'company_name':   rec.get('company_name', ''),
                 'nse_ticker':     nse_ticker,
                 'published_date': (rec.get('published_date') or '')[:10],
                 'source_link':    rec.get('source_link', ''),
-                'summary_text':   ai.get('summary_text') or ai.get('summary_header') or '',
+                'summary_text':   summary,
                 'sentiment':      ai.get('sentiment') or '',
             })
 
@@ -1349,7 +1356,7 @@ def reg30_analyze():
         # full_attachment_text is bounded by the frontend's parse endpoint which caps at 100k chars.
         full_attachment_text = (data.get('attachment_text') or '').strip()
         attachment_text = full_attachment_text[:30000]
-        if len(attachment_text) < 100:
+        if len(attachment_text) < 30:
             return jsonify({
                 "error": "Document text empty or too short. The link could not be fetched or the page has no extractable content. Check the URL or try again later."
             }), 400
@@ -1357,33 +1364,60 @@ def reg30_analyze():
         symbol = candidate.get('symbol') or ''
         source = candidate.get('source') or 'XBRL'
         raw_text = candidate.get('raw_text') or ''
+        # Dual-mode: short summaries (StockInsights AI text, <3000 chars) need natural-language
+        # extraction rules.  Long text (>=3000 chars) is a real XBRL/iXBRL document and needs
+        # field-name-based rules.
+        is_summary = len(attachment_text) < 3000
         prompt = (
-            "Perform a forensic extraction on this NSE disclosure:\n"
+            "Perform a forensic extraction on this NSE order/contract announcement:\n"
             f"Company: {company_name}\n"
             f"Symbol: {symbol}\n"
             f"Source: {source}\n"
             f"Context: {raw_text}\n\n"
-            f"Document Text: {attachment_text}\n\n"
-            "Return STRICT JSON only with these keys: summary (string), direction_hint (one of: POSITIVE, NEGATIVE, NEUTRAL), "
+            f"{'Announcement Summary' if is_summary else 'Document Text'}: {attachment_text}\n\n"
+            "Return STRICT JSON only with these keys: summary (string), direction_hint (POSITIVE/NEGATIVE/NEUTRAL), "
             "confidence (number 0-1), missing_fields (array of strings), evidence_spans (array of strings, max 160 chars each), "
-            "extracted (object with: symbol, company_name, order_value_cr, stage, execution_months, execution_years, end_date, "
-            "order_type, customer, international, new_customer, conditionality, rating_action, notches, outlook_change, "
-            "amount_cr, stage_legal, ops_impact; and when present in document: nse_symbol, market_cap_cr)."
+            "extracted (object with: nse_symbol, company_name, order_value_cr, stage, execution_months, execution_years, "
+            "end_date, order_type, customer, international, new_customer, is_subsidiary_win, subsidiary_name, "
+            "conditionality, rating_action, notches, outlook_change, amount_cr, stage_legal, ops_impact, market_cap_cr)."
         )
-        sys_instr = (
-            "You are an expert Indian equity events analyst focused on NSE Regulation 30–style disclosures and order-pipeline events. "
-            "You ONLY summarize and extract structured data from provided text. You do NOT browse the web.\n\n"
-            "HARD RULES:\n"
-            "1) NEVER fabricate numbers or facts. If not present, output null and add the field name to missing_fields.\n"
-            "2) Use only provided raw_text/attachment_text. No external sources.\n"
-            "3) Provide evidence_spans (<=160 chars each) for key extractions/classifications.\n"
-            "4) CURRENCY: Convert all monetary values to Crore (CR). 1 CR = 10,000,000 INR = 100 Lakhs. For USD amounts use approx 84 INR/USD (e.g. USD 1M ≈ 8.4 CR). Always output order_value_cr as a plain number in Crore.\n"
-            "5) STAGE: Must be one of: \"L1\" | \"LOA\" | \"WO\" | \"NTP\" | \"MOU\" | \"OTHER\".\n"
-            "6) Output MUST be STRICT JSON only.\n"
-            "7) MANDATORY: Read the very beginning of the document. Look for a 'General Information' section with 'NSE Symbol*' and 'Name of the Company*' (or similar). Set extracted.nse_symbol to the symbol value (e.g. MCLOUD, AHUCON) and extracted.company_name to the full company name. Always prefer these document values over any context.\n"
-            "8) If the document mentions market cap or market capitalization (in Cr or Rs), extract as market_cap_cr (number in Crore).\n"
-            "9) For order_value_cr: prefer (in priority order): (a) 'Broad commercial consideration', (b) 'size of the order(s)/contract(s)', (c) 'Value of the order(s)/contract(s)' as last resort if (a) and (b) are absent or N.A. Always convert to Crore. Add the source field name as an evidence_span."
-        )
+
+        if is_summary:
+            sys_instr = (
+                "You are an expert Indian equity events analyst. Extract structured data from a short contract/order announcement summary.\n\n"
+                "RULES:\n"
+                "1) Extract ONLY what is explicitly present. Use null for absent fields. NEVER fabricate.\n"
+                "2) CURRENCY: Convert to Crore (CR). 1 CR = 100 Lakhs = 10,000,000 INR. USD 1M ≈ 8.4 CR.\n"
+                "3) STAGE — classify from natural language:\n"
+                "   L1  = 'L1 bidder', 'lowest bidder', 'emerged as L1', 'declared L1'\n"
+                "   LOA = 'letter of award', 'LOA issued'\n"
+                "   WO  = 'work order', 'awarded a contract', 'received an order', 'secured a contract', 'won a contract', 'bagged'\n"
+                "   NTP = 'notice to proceed', 'NTP issued'\n"
+                "   MOU = 'memorandum of understanding', 'MOU signed'\n"
+                "   OTHER = none of the above clearly matches\n"
+                "4) order_type: CONSTRUCTION | EPC | SUPPLY | SERVICES | MANUFACTURING | OTHER — infer from project description.\n"
+                "5) is_subsidiary_win = true if a subsidiary/WOS/group company (not the parent directly) received the order.\n"
+                "   subsidiary_name = name of that entity.\n"
+                "6) evidence_spans: quote the exact text phrase for each key extraction (max 160 chars).\n"
+                "7) Output MUST be STRICT JSON only.\n"
+                "8) nse_symbol: use the symbol from the Context line above if not explicitly in the announcement.\n"
+                "9) execution_months: extract from '18 months', '2 years'→24, 'period of X'.\n"
+            )
+        else:
+            sys_instr = (
+                "You are an expert Indian equity events analyst focused on NSE Regulation 30–style disclosures and order-pipeline events. "
+                "You ONLY summarize and extract structured data from provided text. You do NOT browse the web.\n\n"
+                "HARD RULES:\n"
+                "1) NEVER fabricate numbers or facts. If not present, output null and add the field name to missing_fields.\n"
+                "2) Use only provided raw_text/attachment_text. No external sources.\n"
+                "3) Provide evidence_spans (<=160 chars each) for key extractions/classifications.\n"
+                "4) CURRENCY: Convert all monetary values to Crore (CR). 1 CR = 10,000,000 INR = 100 Lakhs. For USD amounts use approx 84 INR/USD (e.g. USD 1M ≈ 8.4 CR). Always output order_value_cr as a plain number in Crore.\n"
+                "5) STAGE: Must be one of: \"L1\" | \"LOA\" | \"WO\" | \"NTP\" | \"MOU\" | \"OTHER\".\n"
+                "6) Output MUST be STRICT JSON only.\n"
+                "7) MANDATORY: Read the very beginning of the document. Look for a 'General Information' section with 'NSE Symbol*' and 'Name of the Company*' (or similar). Set extracted.nse_symbol to the symbol value and extracted.company_name to the full company name.\n"
+                "8) If the document mentions market cap or market capitalization (in Cr or Rs), extract as market_cap_cr (number in Crore).\n"
+                "9) For order_value_cr: prefer (in priority order): (a) 'Broad commercial consideration', (b) 'size of the order(s)/contract(s)', (c) 'Value of the order(s)/contract(s)' as last resort. Always convert to Crore.\n"
+            )
         for model_name in get_gemini_model_candidates():
             try:
                 response = ai_client.models.generate_content(
