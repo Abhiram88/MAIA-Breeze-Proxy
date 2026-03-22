@@ -1340,128 +1340,438 @@ def nse_announcements():
         return jsonify({'error': str(e), 'announcements': []}), 500
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# REG30 HELPERS — ported from Bulk_reg30_processor.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+_STAGE_ORDER = {"L1": 1, "LOA": 2, "WO": 3, "NTP": 4}
+
+def _to_float(v, default=0.0):
+    try:
+        if v is None or v == "": return float(default)
+        return float(str(v).replace(",", "").strip())
+    except Exception:
+        return float(default)
+
+def _norm_date(raw):
+    if not raw:
+        return datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    for fmt in (None, "%d-%b-%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            if fmt is None:
+                return datetime.datetime.fromisoformat(
+                    raw.strip().replace("Z", "+00:00")).strftime("%Y-%m-%d")
+            return datetime.datetime.strptime(raw.strip().split("T")[0], fmt).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    return raw.strip()[:10]
+
+def _norm_datetime(raw):
+    if not raw:
+        return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    try:
+        return datetime.datetime.fromisoformat(
+            raw.strip().replace("Z", "+00:00")).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    except Exception:
+        return _norm_date(raw) + "T00:00:00+00:00"
+
+def _infer_months(text):
+    if not text: return None
+    t = text.lower().strip()
+    if any(w in t for w in ("immediately", "spot", "forthwith", "on delivery", "working days", "within days")):
+        return 1
+    if "financial year" in t or "next year" in t: return 12
+    word_nums = [
+        ("one and a half", 18), ("one and half", 18), ("one-and-a-half", 18),
+        ("twenty four", 24), ("twenty-four", 24), ("thirty six", 36), ("thirty-six", 36),
+        ("eighteen", 18), ("fifteen", 15), ("sixteen", 16), ("seventeen", 17),
+        ("nineteen", 19), ("fourteen", 14), ("thirteen", 13), ("twelve", 12),
+        ("eleven", 11), ("twenty", 20), ("ten", 10), ("nine", 9), ("eight", 8),
+        ("seven", 7), ("six", 6), ("five", 5), ("four", 4), ("three", 3), ("two", 2), ("one", 1),
+    ]
+    for word, num in word_nums:
+        if word in t:
+            if "year" in t:  return num * 12
+            if "month" in t: return num
+            if "week" in t:  return max(1, round(num / 4.3))
+            if "day" in t:   return max(1, round(num / 30.4))
+    m = re.search(r"(\d+(?:\.\d+)?)\s*[-–]?\s*\d*\s*(months?|years?|weeks?|days?)", t, re.IGNORECASE)
+    if m:
+        val, unit = float(m.group(1)), m.group(2).lower()
+        if "year"  in unit: return int(val * 12)
+        if "month" in unit: return max(1, int(val))
+        if "week"  in unit: return max(1, round(val / 4.3))
+        if "day"   in unit: return max(1, round(val / 30.4))
+    return None
+
+def _classify_family(text, stage):
+    t = (text or "").lower()
+    if re.search(r"arbitrat|certif|settlement|termination|\bagm\b|\begm\b|board meeting|"
+                 r"green building|empanell|empanel|network provider|enrollment", t):
+        return "OTHER"
+    if re.search(
+        r"awarding|bagging|work order|letter of award|\bloa\b|l1 bidder|"
+        r"lowest bidder|notice to proceed|\bntp\b|purchase order|\bpo\b|"
+        r"contract.*award|rate contract|framework agreement|received.*order|"
+        r"secured.*contract|won.*contract|awarded.*contract|bagged.*order", t
+    ):
+        return "ORDER_CONTRACT"
+    if re.search(r"issuance|allotment|equity|rights issue|fundrais", t):
+        return "DILUTION_CAPITAL"
+    if re.search(r"dividend|buyback|bonus|stock split", t):
+        return "SHAREHOLDER_RETURNS"
+    if re.search(r"\brating\b|\bcrisil\b|\bicra\b|\bcare\b|\bfitch\b|\bmoody\b", t):
+        return "CREDIT_RATING"
+    if re.search(r"litigation|fine|court|penalty|arbitration|sebi notice", t):
+        return "LITIGATION_REGULATORY"
+    if stage and stage in _STAGE_ORDER:
+        return "ORDER_CONTRACT"
+    return "OTHER"
+
+def _validate_extraction(ext, summary, family):
+    issues = []
+    e = dict(ext)
+    # execution_months
+    em = e.get("execution_months")
+    if em is not None:
+        try:
+            em = int(float(str(em)))
+            e["execution_months"] = em if 0 < em <= 600 else None
+            if e["execution_months"] is None:
+                issues.append(f"execution_months={em} out of range — cleared")
+        except Exception:
+            issues.append(f"execution_months={em!r} not numeric — cleared")
+            e["execution_months"] = None
+    if e.get("execution_months") is None and e.get("execution_period_text"):
+        inferred = _infer_months(e["execution_period_text"])
+        if inferred:
+            e["execution_months"] = inferred
+    if e.get("execution_months") is None and e.get("end_date"):
+        try:
+            datetime.datetime.strptime(str(e["end_date"])[:10], "%Y-%m-%d")
+            e["_end_date_pending_resolution"] = e["end_date"]
+            issues.append(f"execution_months pending — end_date={e['end_date']}")
+        except Exception:
+            pass
+    # order_value_cr
+    ov = e.get("order_value_cr")
+    if ov is not None:
+        ov_f = _to_float(ov)
+        if ov_f <= 0:
+            issues.append("order_value_cr <= 0 — cleared"); e["order_value_cr"] = None
+        elif ov_f > 500_000:
+            issues.append(f"order_value_cr={ov_f} suspiciously large — flagged")
+        else:
+            e["order_value_cr"] = ov_f
+    if not e.get("order_value_cr") and family in ("ORDER_CONTRACT", "ORDER_PIPELINE"):
+        m = re.search(r'(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d+)?)\s*(?:Cr(?:ore)?s?)', summary, re.IGNORECASE)
+        if m:
+            val = _to_float(m.group(1))
+            if 0 < val < 500_000:
+                e["order_value_cr"] = val
+    # order_type
+    ot = (e.get("order_type") or "").upper()
+    valid_types = {"CONSTRUCTION", "SUPPLY", "SERVICES", "SUB-CONTRACT", "MIXED"}
+    if ot not in valid_types:
+        s = summary.lower()
+        if any(w in s for w in ["civil","road","bridge","epc","construction","electrification","infrastructure","tunnel"]):
+            e["order_type"] = "CONSTRUCTION"
+        elif any(w in s for w in ["supply","equipment","material","transformer","hardware","manufacturing","solar module"]):
+            e["order_type"] = "SUPPLY"
+        elif any(w in s for w in ["software","it ","surveillance","maintenance","o&m","consulting","services","analytics","outsourcing"]):
+            e["order_type"] = "SERVICES"
+        else:
+            e["order_type"] = "UNKNOWN"
+    # stage
+    stage = e.get("stage")
+    if stage not in (None, "L1", "LOA", "WO", "NTP", "MOU", "OTHER"):
+        issues.append(f"stage='{stage}' invalid — cleared"); e["stage"] = None
+    # critical missing
+    if family in ("ORDER_CONTRACT", "ORDER_PIPELINE"):
+        if not e.get("order_value_cr"): issues.append("order_value_cr missing on ORDER event")
+        if not e.get("stage"):          issues.append("stage missing on ORDER event")
+        if not e.get("execution_months"): issues.append("execution_months could not be determined")
+    if issues: e["_validation_issues"] = issues
+    return e, issues
+
+def _calculate_score(family, ext, confidence):
+    impact = 0; direction = "NEUTRAL"; factors = []; conversion_bonus = 0; exec_months = None
+    order_type = (ext.get("order_type") or "UNKNOWN").upper()
+    def add(pts, msg):
+        nonlocal impact
+        impact += pts
+        factors.append(f"{'+' if pts >= 0 else ''}{pts}: {msg}")
+    if family in ("ORDER_CONTRACT", "ORDER_PIPELINE"):
+        direction = "POSITIVE"
+        add(20 if family == "ORDER_CONTRACT" else 15, f"Base weight for {family.replace('_',' ')}")
+        order_cr = _to_float(ext.get("order_value_cr"))
+        market_cap = _to_float(ext.get("market_cap_cr"))
+        if order_cr > 0:
+            if market_cap > 0:
+                ratio = order_cr / market_cap
+                bonus = 25 if ratio >= 0.15 else 18 if ratio >= 0.08 else 12 if ratio >= 0.03 else 6 if ratio >= 0.01 else 2
+                add(bonus, f"Order/mktcap {ratio*100:.2f}% (Rs.{order_cr}Cr / Rs.{market_cap}Cr)")
+            else:
+                bonus = 30 if order_cr >= 1000 else 20 if order_cr >= 500 else 10 if order_cr >= 100 else 5
+                add(bonus, f"Absolute value bonus (Rs.{order_cr}Cr)")
+        else:
+            add(-10, "Order value missing")
+        stage = ext.get("stage") or ""
+        stage_bonus = {"LOA": 20, "WO": 20, "NTP": 18, "L1": 12}.get(stage, 5)
+        add(stage_bonus, f"Stage: {stage or 'General'}")
+        contract_mode = (ext.get("contract_mode") or "").upper()
+        if contract_mode == "HAM":
+            exec_months = ext.get("construction_period_months") or ext.get("execution_months")
+        if exec_months is None:
+            exec_months = ext.get("execution_months")
+        if exec_months is None and ext.get("execution_years"):
+            exec_months = int(_to_float(ext["execution_years"]) * 12)
+        if exec_months:
+            exec_months = int(exec_months)
+            conversion_bonus = 10 if exec_months <= 6 else 6 if exec_months <= 12 else 2 if exec_months <= 24 else 0
+            if order_type == "SUPPLY":    conversion_bonus += 2
+            elif order_type == "SERVICES": conversion_bonus += 1
+            conversion_bonus = min(conversion_bonus, 10)
+            if conversion_bonus > 0:
+                add(conversion_bonus, f"Conversion bonus (~{exec_months}m, {order_type})")
+        if ext.get("is_subsidiary_win"):
+            add(-8, f"Subsidiary win ({ext.get('subsidiary_name','WOS')})")
+    elif family == "CREDIT_RATING":
+        action = (ext.get("rating_action") or "").lower()
+        if "upgrade" in action:
+            direction = "POSITIVE";  add(40, f"Rating upgrade: {action}")
+        elif "downgrade" in action:
+            direction = "NEGATIVE";  add(50, f"Rating downgrade: {action}")
+        else:
+            add(10, f"Rating action: {action or 'review'}")
+    elif family == "LITIGATION_REGULATORY":
+        direction = "NEGATIVE"; add(40, "Litigation / regulatory risk")
+    else:
+        add(10, f"Standard event: {family}")
+    impact = min(max(impact, 0), 100)
+    has_issues = bool(ext.get("_validation_issues"))
+    if (has_issues and confidence < 0.7) or confidence < 0.65:
+        rec = "NEEDS_MANUAL_REVIEW"
+    elif impact >= 75:
+        rec = "ACTIONABLE_BULLISH" if direction == "POSITIVE" else "ACTIONABLE_BEARISH_RISK"
+    elif impact >= 55:
+        rec = "HIGH_PRIORITY_WATCH"
+    else:
+        rec = "TRACK"
+    return {"impact_score": impact, "direction": direction, "action_recommendation": rec,
+            "scoring_factors": factors, "conversion_bonus": conversion_bonus,
+            "execution_months": exec_months, "order_type": order_type}
+
+
+# Semantic system instruction — from Bulk_reg30_processor.py
+_EXTRACTION_SYSTEM = """You are an expert Indian equity analyst reading NSE Regulation 30 corporate announcements.
+
+Your job is to extract structured data from the attached document or announcement summary. Use your full reasoning ability — do not just pattern-match to examples.
+
+WHAT TO EXTRACT:
+- Company identity: NSE symbol, company name
+- Contract basics: who awarded it, domestic or international, nature of work
+- Contract value: the total consideration/size in Indian Crores (convert if needed: 1 Crore = 10 million INR = 100 Lakhs; USD 1M ≈ 8.4 Cr)
+- Contract stage: L1 (lowest bidder, not yet awarded) | LOA (Letter of Award received) | WO (Work Order / Purchase Order / Contract signed / awarded / secured / bagged) | NTP (Notice to Proceed) | MOU | OTHER
+- Duration: how long the contract runs — convert to integer months
+  (Two Years = 24, 18 months = 18, 90 days = 3, immediately = 1)
+  For HAM/BOT infrastructure contracts, use only the construction period, not the O&M period
+- Order type: CONSTRUCTION | SUPPLY | SERVICES | SUB-CONTRACT
+  Infer from what is being done — civil/road/power/EPC = CONSTRUCTION, goods/equipment = SUPPLY,
+  IT/O&M/surveillance/consulting = SERVICES, work for a main contractor = SUB-CONTRACT
+- Whether the order was won by a subsidiary (not the listed parent company itself)
+- Whether the announcement covers multiple separate orders
+
+RULES:
+1. Never fabricate numbers. If something is genuinely absent, return null.
+2. For contract value, prefer the "Broad consideration" or "size of contract" field if present.
+   Otherwise extract from any clear statement in the text (e.g. "valued at Rs. 500 crore").
+3. Return STRICT JSON only — no markdown, no explanation outside the JSON.
+4. Confidence: your honest 0.0–1.0 estimate of extraction quality.
+   Use < 0.7 if the document is unclear, scanned poorly, or key fields are missing.
+"""
+
+_EXTRACTION_PROMPT = """Read this NSE Reg30 announcement and extract all fields.
+
+Company (from dataset): {company_name}
+NSE Ticker (from dataset): {nse_ticker}
+Filing Date: {published_date}
+
+Return this exact JSON structure:
+{{
+  "summary": "2-3 sentences describing what happened in plain English",
+  "direction_hint": "POSITIVE",
+  "confidence": 0.85,
+  "missing_fields": [],
+  "evidence_spans": ["short direct quotes (max 120 chars each) supporting key extractions"],
+  "extracted": {{
+    "nse_symbol": "NSE ticker symbol",
+    "company_name": "Full legal company name",
+    "customer": "Name of the entity that awarded the contract",
+    "international": false,
+    "order_value_cr": 500.0,
+    "original_currency": null,
+    "original_value": null,
+    "stage": "WO",
+    "execution_months": 18,
+    "execution_period_text": "exact duration phrase from document",
+    "construction_period_months": null,
+    "contract_mode": "EPC",
+    "order_type": "CONSTRUCTION",
+    "is_subsidiary_win": false,
+    "subsidiary_name": null,
+    "multiple_orders": false,
+    "new_customer": null,
+    "conditionality": "LOW",
+    "prior_stage": null,
+    "rating_action": null,
+    "market_cap_cr": null,
+    "networth_cr": null
+  }}
+}}"""
+
+
 @app.route('/api/gemini/reg30-analyze', methods=['POST', 'OPTIONS'])
 @cross_origin()
 def reg30_analyze():
-    """Run Reg30 event analysis with Gemini. Extraction only; impact scoring is done in frontend."""
+    """
+    Reg30 analysis endpoint — ported from Bulk_reg30_processor.py.
+    Fetches PDF bytes directly, sends to Gemini multimodal, validates extraction,
+    runs scoring server-side. Returns complete payload ready for Supabase upsert.
+    """
     if request.method == 'OPTIONS':
         return jsonify(success=True)
     initialize_ai_clients()
     if not ai_client:
         return jsonify({"error": "Gemini AI client not initialized"}), 500
     try:
+        import requests as _req
         data = request.get_json(silent=True) or {}
         candidate = data.get('candidate') or {}
-        # Keep full text for regex fallback; truncate a copy for Gemini's context window.
-        # full_attachment_text is bounded by the frontend's parse endpoint which caps at 100k chars.
-        full_attachment_text = (data.get('attachment_text') or '').strip()
-        attachment_text = full_attachment_text[:30000]
-        if len(attachment_text) < 30:
-            return jsonify({
-                "error": "Document text empty or too short. The link could not be fetched or the page has no extractable content. Check the URL or try again later."
-            }), 400
-        company_name = candidate.get('company_name') or 'Unknown'
-        symbol = candidate.get('symbol') or ''
-        source = candidate.get('source') or 'XBRL'
-        raw_text = candidate.get('raw_text') or ''
-        # Dual-mode: short summaries (StockInsights AI text, <3000 chars) need natural-language
-        # extraction rules.  Long text (>=3000 chars) is a real XBRL/iXBRL document and needs
-        # field-name-based rules.
-        is_summary = len(attachment_text) < 3000
-        prompt = (
-            "Perform a forensic extraction on this NSE order/contract announcement:\n"
-            f"Company: {company_name}\n"
-            f"Symbol: {symbol}\n"
-            f"Source: {source}\n"
-            f"Context: {raw_text}\n\n"
-            f"{'Announcement Summary' if is_summary else 'Document Text'}: {attachment_text}\n\n"
-            "Return STRICT JSON only with these keys: summary (string), direction_hint (POSITIVE/NEGATIVE/NEUTRAL), "
-            "confidence (number 0-1), missing_fields (array of strings), evidence_spans (array of strings, max 160 chars each), "
-            "extracted (object with: nse_symbol, company_name, order_value_cr, stage, execution_months, execution_years, "
-            "end_date, order_type, customer, international, new_customer, is_subsidiary_win, subsidiary_name, "
-            "conditionality, rating_action, notches, outlook_change, amount_cr, stage_legal, ops_impact, market_cap_cr)."
-        )
 
-        if is_summary:
-            sys_instr = (
-                "You are an expert Indian equity events analyst. Extract structured data from a short contract/order announcement summary.\n\n"
-                "RULES:\n"
-                "1) Extract ONLY what is explicitly present. Use null for absent fields. NEVER fabricate.\n"
-                "2) CURRENCY: Convert to Crore (CR). 1 CR = 100 Lakhs = 10,000,000 INR. USD 1M ≈ 8.4 CR.\n"
-                "3) STAGE — classify from natural language:\n"
-                "   L1  = 'L1 bidder', 'lowest bidder', 'emerged as L1', 'declared L1'\n"
-                "   LOA = 'letter of award', 'LOA issued'\n"
-                "   WO  = 'work order', 'awarded a contract', 'received an order', 'secured a contract', 'won a contract', 'bagged'\n"
-                "   NTP = 'notice to proceed', 'NTP issued'\n"
-                "   MOU = 'memorandum of understanding', 'MOU signed'\n"
-                "   OTHER = none of the above clearly matches\n"
-                "4) order_type: CONSTRUCTION | EPC | SUPPLY | SERVICES | MANUFACTURING | OTHER — infer from project description.\n"
-                "5) is_subsidiary_win = true if a subsidiary/WOS/group company (not the parent directly) received the order.\n"
-                "   subsidiary_name = name of that entity.\n"
-                "6) evidence_spans: quote the exact text phrase for each key extraction (max 160 chars).\n"
-                "7) Output MUST be STRICT JSON only.\n"
-                "8) nse_symbol: use the symbol from the Context line above if not explicitly in the announcement.\n"
-                "9) execution_months: extract from '18 months', '2 years'→24, 'period of X'.\n"
-            )
+        company_name   = (candidate.get('company_name') or 'Unknown').strip()
+        symbol         = (candidate.get('symbol') or '').strip()
+        source_link    = (candidate.get('attachment_link') or candidate.get('source_link') or '').strip()
+        raw_text       = (candidate.get('raw_text') or '').strip()
+        published_date = (candidate.get('event_date') or candidate.get('published_date') or '').strip()
+        event_date     = _norm_date(published_date)
+        event_datetime = _norm_datetime(published_date)
+
+        # ── Fetch PDF bytes ────────────────────────────────────────────────────
+        pdf_bytes = None
+        if source_link and source_link.startswith('http'):
+            try:
+                r = _req.get(source_link,
+                             headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/pdf,*/*'},
+                             timeout=15)
+                if r.status_code == 200 and len(r.content) >= 500 and r.content[:4] == b'%PDF':
+                    pdf_bytes = r.content
+                    logger.info(f"[Reg30] PDF fetched: {len(pdf_bytes)}b {source_link[:80]}")
+                else:
+                    logger.warning(f"[Reg30] PDF fetch failed HTTP {r.status_code} or not PDF: {source_link[:80]}")
+            except Exception as e:
+                logger.warning(f"[Reg30] PDF fetch error: {e}")
+
+        # ── Build Gemini content parts ─────────────────────────────────────────
+        prompt_text = _EXTRACTION_PROMPT.format(
+            company_name=company_name,
+            nse_ticker=symbol or company_name,
+            published_date=event_date,
+        )
+        if pdf_bytes:
+            content_parts = [
+                types.Part(inline_data=types.Blob(data=pdf_bytes, mime_type='application/pdf')),
+                types.Part(text=prompt_text),
+            ]
+        elif raw_text:
+            if len(raw_text) < 20:
+                return jsonify({"error": "No PDF accessible and summary too short"}), 400
+            content_parts = [types.Part(text=f"Announcement Summary:\n{raw_text}\n\n{prompt_text}")]
         else:
-            sys_instr = (
-                "You are an expert Indian equity events analyst focused on NSE Regulation 30–style disclosures and order-pipeline events. "
-                "You ONLY summarize and extract structured data from provided text. You do NOT browse the web.\n\n"
-                "HARD RULES:\n"
-                "1) NEVER fabricate numbers or facts. If not present, output null and add the field name to missing_fields.\n"
-                "2) Use only provided raw_text/attachment_text. No external sources.\n"
-                "3) Provide evidence_spans (<=160 chars each) for key extractions/classifications.\n"
-                "4) CURRENCY: Convert all monetary values to Crore (CR). 1 CR = 10,000,000 INR = 100 Lakhs. For USD amounts use approx 84 INR/USD (e.g. USD 1M ≈ 8.4 CR). Always output order_value_cr as a plain number in Crore.\n"
-                "5) STAGE: Must be one of: \"L1\" | \"LOA\" | \"WO\" | \"NTP\" | \"MOU\" | \"OTHER\".\n"
-                "6) Output MUST be STRICT JSON only.\n"
-                "7) MANDATORY: Read the very beginning of the document. Look for a 'General Information' section with 'NSE Symbol*' and 'Name of the Company*' (or similar). Set extracted.nse_symbol to the symbol value and extracted.company_name to the full company name.\n"
-                "8) If the document mentions market cap or market capitalization (in Cr or Rs), extract as market_cap_cr (number in Crore).\n"
-                "9) For order_value_cr: prefer (in priority order): (a) 'Broad commercial consideration', (b) 'size of the order(s)/contract(s)', (c) 'Value of the order(s)/contract(s)' as last resort. Always convert to Crore.\n"
-            )
+            return jsonify({"error": "No PDF URL provided and no summary text available"}), 400
+
+        # ── Gemini extraction ──────────────────────────────────────────────────
+        result = None
         for model_name in get_gemini_model_candidates():
             try:
                 response = ai_client.models.generate_content(
                     model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(system_instruction=sys_instr),
+                    contents=content_parts,
+                    config=types.GenerateContentConfig(
+                        system_instruction=_EXTRACTION_SYSTEM,
+                        temperature=0.1,
+                    ),
                 )
                 result = extract_json(response.text)
-                if not result or not isinstance(result.get('summary'), str):
-                    continue
-                # Normalize: promote symbol/company from extracted to top level so frontend always has them
-                extracted = result.get('extracted') or {}
-                if not isinstance(extracted, dict):
-                    extracted = {}
-                result['symbol'] = extracted.get('nse_symbol') or extracted.get('symbol') or result.get('symbol') or symbol or ''
-                result['company_name'] = extracted.get('company_name') or result.get('company_name') or company_name or 'Unknown'
-                # Fallback: parse from document text if Gemini missed General Information (table format: | NSE Symbol* | VALUE |)
-                # Use full_attachment_text (up to 100k) so the search is not limited to the 30k Gemini window.
-                if (not result['symbol'] or not result['company_name'] or result['company_name'] == 'Unknown') and full_attachment_text:
-                    if not result['symbol'] and ('NSE Symbol' in full_attachment_text or 'nse symbol' in full_attachment_text.lower()):
-                        m = re.search(r'NSE\s+Symbol\s*\*?\s*[:\s|]*([A-Z][A-Z0-9]{1,19})', full_attachment_text, re.IGNORECASE)
-                        if not m:
-                            m = re.search(r'NSE\s+Symbol[^*]*\*?\s*[\s|:\n]*\s*([A-Z0-9]{2,20})\s*[\s|]', full_attachment_text, re.IGNORECASE)
-                        if not m:
-                            m = re.search(r'NSE\s+Symbol[^*]*\*?\s*[\s|:]*([A-Z0-9]{2,20})', full_attachment_text, re.IGNORECASE)
-                        if m:
-                            result['symbol'] = m.group(1).strip().upper()
-                            extracted['nse_symbol'] = result['symbol']
-                    if not result['company_name'] or result['company_name'] == 'Unknown':
-                        if 'Name of the Company' in full_attachment_text or 'name of the company' in full_attachment_text.lower():
-                            m = re.search(r'Name\s+of\s+the\s+Company\s*\*?\s*[:\s|]*(.+?)(?=\s*(?:Compliance\s+Officer|SEBI|BSE\s+Script|Registered\s+Office|CIN|Date\s+of|ISIN|Scrip\s+Code|Whether\s+|Regulation|[\n|]|$))', full_attachment_text, re.IGNORECASE)
-                            if not m:
-                                m = re.search(r'Name\s+of\s+the\s+Company[^*]*\*?\s*[\s|:\n]*\s*([^\n|]+?)(?:\s*[\n|]|$)', full_attachment_text, re.IGNORECASE)
-                            if m:
-                                name = m.group(1).strip()
-                                if name and len(name) > 2 and name.upper() not in ('NA', 'N/A', 'NOT LISTED'):
-                                    result['company_name'] = name
-                                    extracted['company_name'] = name
-                result['extracted'] = extracted
-                return jsonify(result)
+                if result and isinstance(result.get('summary'), str):
+                    logger.info(f"[Reg30] Extracted via {model_name} for {symbol}")
+                    break
             except Exception as e:
-                logger.warning(f"Reg30 analyze ({model_name}): {e}")
+                logger.warning(f"[Reg30] Gemini ({model_name}): {e}")
                 continue
-        return jsonify({"error": "Reg30 analysis failed"}), 500
+
+        if not result:
+            return jsonify({"error": "Reg30 analysis failed — Gemini returned no valid JSON"}), 500
+
+        # ── Classify + Validate + Score ────────────────────────────────────────
+        raw_ext    = result.get('extracted') or {}
+        summary    = result.get('summary') or ''
+        confidence = float(result.get('confidence') or 0.5)
+
+        family = _classify_family(summary + ' ' + raw_text + ' ' + (raw_ext.get('order_type') or ''),
+                                   raw_ext.get('stage'))
+        # Upgrade OTHER if extraction has evidence of a contract
+        if family == 'OTHER' and (
+            raw_ext.get('order_value_cr') or
+            raw_ext.get('stage') in ('L1', 'LOA', 'WO', 'NTP') or
+            raw_ext.get('customer')
+        ):
+            family = 'ORDER_CONTRACT'
+
+        ext, v_issues = _validate_extraction(raw_ext, summary, family)
+        if v_issues:
+            logger.info(f"[Reg30] {symbol} validation: {v_issues}")
+
+        # Resolve end_date → execution_months when Gemini returned an end date
+        if ext.get('_end_date_pending_resolution') and not ext.get('execution_months'):
+            try:
+                end   = datetime.datetime.strptime(str(ext['_end_date_pending_resolution'])[:10], '%Y-%m-%d')
+                start = datetime.datetime.strptime(event_date, '%Y-%m-%d')
+                months = max(1, round((end - start).days / 30.4))
+                if 0 < months <= 600:
+                    ext['execution_months'] = months
+            except Exception:
+                pass
+
+        scoring = _calculate_score(family, ext, confidence)
+
+        resolved_symbol  = (ext.get('nse_symbol') or ext.get('symbol') or symbol or '').strip().upper()
+        resolved_company = (ext.get('company_name') or company_name or 'Unknown').strip()
+
+        logger.info(
+            f"[Reg30] {resolved_symbol} | family={family} stage={ext.get('stage')} "
+            f"order_cr={ext.get('order_value_cr')} exec_months={scoring.get('execution_months')} "
+            f"score={scoring['impact_score']} rec={scoring['action_recommendation']}"
+        )
+
+        return jsonify({
+            **result,
+            "symbol":                resolved_symbol,
+            "company_name":          resolved_company,
+            "event_date":            event_date,
+            "event_datetime":        event_datetime,
+            "extracted":             ext,
+            "event_family":          family,
+            "impact_score":          scoring["impact_score"],
+            "direction":             scoring["direction"],
+            "action_recommendation": scoring["action_recommendation"],
+            "scoring_factors":       scoring["scoring_factors"],
+            "conversion_bonus":      scoring.get("conversion_bonus", 0),
+            "execution_months":      scoring.get("execution_months"),
+            "order_type":            scoring.get("order_type"),
+            "_validation_issues":    v_issues or [],
+            "_proxy_scored":         True,
+        })
     except Exception as e:
         logger.exception("Reg30 analyze error")
         return jsonify({"error": str(e)}), 500
