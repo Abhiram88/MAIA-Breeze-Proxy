@@ -439,7 +439,7 @@ def get_gemini_model_candidates():
     Ordered fallback list for us-central1 and other regions.
     Try 2.5 first, then 2.0, then 1.5 so at least one model is available.
     """
-    raw = get_secret("GEMINI_MODELS") or os.environ.get("GEMINI_MODELS", "")
+    raw = os.environ.get("GEMINI_MODELS") or (_yaml_config.get("GEMINI_MODELS") if _yaml_config else "") or ""
     configured = [m.strip() for m in raw.split(",") if m and m.strip()]
     if configured:
         return configured
