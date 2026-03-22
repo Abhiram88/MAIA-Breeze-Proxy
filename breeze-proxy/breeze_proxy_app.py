@@ -192,7 +192,7 @@ def initialize_ai_clients():
     global ai_client
     if ai_client is None:
         try:
-            gcp_project_id = get_secret("GCP_PROJECT_ID") or os.environ.get("GCP_PROJECT_ID", "")
+            gcp_project_id = get_secret("GCP_PROJECT_ID")
             vertex_location = os.environ.get("VERTEX_LOCATION", "us-central1")
 
             if gcp_project_id:
