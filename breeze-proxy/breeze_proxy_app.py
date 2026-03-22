@@ -192,12 +192,21 @@ def initialize_ai_clients():
     global ai_client
     if ai_client is None:
         try:
-            gemini_api_key = get_secret("GEMINI_API_KEY")
-            if not gemini_api_key:
-                logger.error("GEMINI_API_KEY is missing!")
+            gcp_project_id = get_secret("GCP_PROJECT_ID") or os.environ.get("GCP_PROJECT_ID", "")
+            vertex_location = os.environ.get("VERTEX_LOCATION", "us-central1")
+
+            if gcp_project_id:
+                # Preferred: Vertex AI auth using Cloud Run service account (no API key needed)
+                ai_client = genai.Client(vertexai=True, project=gcp_project_id, location=vertex_location)
+                logger.info(f"Gemini AI client initialized (Vertex AI, project={gcp_project_id}, location={vertex_location}).")
             else:
-                ai_client = genai.Client(api_key=gemini_api_key)
-                logger.info("Gemini AI client initialized.")
+                # Fallback: API key auth for local development
+                gemini_api_key = get_secret("GEMINI_API_KEY")
+                if not gemini_api_key:
+                    logger.error("GCP_PROJECT_ID not set and GEMINI_API_KEY is missing!")
+                else:
+                    ai_client = genai.Client(api_key=gemini_api_key)
+                    logger.info("Gemini AI client initialized (API key).")
         except Exception as e:
             logger.error(f"Gemini AI client initialization error: {e}")
 
