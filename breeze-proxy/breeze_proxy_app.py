@@ -14,7 +14,6 @@ import yaml
 import re
 from google import genai
 from google.genai import types
-import google.auth
 from supabase import create_client, Client
 
 # Load environment variables from .env file for local testing
@@ -188,49 +187,17 @@ def initialize_supabase():
     return supabase
 
 
-def _detect_gcp_project() -> str:
-    """Return a GCP project ID, checking in order:
-    1. Explicit GCP_PROJECT_ID env var / env.yaml value
-    2. Application Default Credentials (auto-detected on Cloud Run, GCE, Cloud Shell)
-    Returns empty string if no project can be determined (triggers API key fallback).
-    """
-    # 1. Explicit env var / yaml
-    project = get_secret("GCP_PROJECT_ID")
-    if project:
-        return project
-
-    # 2. Application Default Credentials (works on Cloud Run, GCE, Cloud Shell)
-    try:
-        _creds, adc_project = google.auth.default()
-        if adc_project:
-            logger.info(f"Auto-detected GCP project from ADC: {adc_project}")
-            return adc_project
-    except Exception:
-        pass
-
-    return ""
-
-
 def initialize_ai_clients():
     """Initializes the Gemini AI and Supabase clients."""
     global ai_client
     if ai_client is None:
         try:
-            gcp_project_id = _detect_gcp_project()
-            vertex_location = os.environ.get("VERTEX_LOCATION", "us-central1")
-
-            if gcp_project_id:
-                # Preferred: Vertex AI auth using Cloud Run service account (no API key needed)
-                ai_client = genai.Client(vertexai=True, project=gcp_project_id, location=vertex_location)
-                logger.info(f"Gemini AI client initialized (Vertex AI, project={gcp_project_id}, location={vertex_location}).")
+            gemini_api_key = get_secret("GEMINI_API_KEY")
+            if not gemini_api_key:
+                logger.error("GEMINI_API_KEY is missing! Set it as a Cloud Run env var or in .env / env.yaml.")
             else:
-                # Fallback: API key auth for local development
-                gemini_api_key = get_secret("GEMINI_API_KEY")
-                if not gemini_api_key:
-                    logger.error("GCP_PROJECT_ID not set and GEMINI_API_KEY is missing!")
-                else:
-                    ai_client = genai.Client(api_key=gemini_api_key)
-                    logger.info("Gemini AI client initialized (API key fallback).")
+                ai_client = genai.Client(api_key=gemini_api_key)
+                logger.info("Gemini AI client initialized (API key).")
         except Exception as e:
             logger.error(f"Gemini AI client initialization error: {e}")
 

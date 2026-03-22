@@ -9,7 +9,6 @@ eventlet
 python-engineio
 python-socketio
 google-genai
-google-auth
 pytz
 pyyaml
 supabase
