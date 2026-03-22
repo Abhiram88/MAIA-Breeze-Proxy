@@ -1377,12 +1377,12 @@ def reg30_analyze():
             "1) NEVER fabricate numbers or facts. If not present, output null and add the field name to missing_fields.\n"
             "2) Use only provided raw_text/attachment_text. No external sources.\n"
             "3) Provide evidence_spans (<=160 chars each) for key extractions/classifications.\n"
-            "4) CURRENCY: Convert raw INR to Crore (CR). 1 CR = 10,000,000 INR.\n"
+            "4) CURRENCY: Convert all monetary values to Crore (CR). 1 CR = 10,000,000 INR = 100 Lakhs. For USD amounts use approx 84 INR/USD (e.g. USD 1M ≈ 8.4 CR). Always output order_value_cr as a plain number in Crore.\n"
             "5) STAGE: Must be one of: \"L1\" | \"LOA\" | \"WO\" | \"NTP\" | \"MOU\" | \"OTHER\".\n"
             "6) Output MUST be STRICT JSON only.\n"
             "7) MANDATORY: Read the very beginning of the document. Look for a 'General Information' section with 'NSE Symbol*' and 'Name of the Company*' (or similar). Set extracted.nse_symbol to the symbol value (e.g. MCLOUD, AHUCON) and extracted.company_name to the full company name. Always prefer these document values over any context.\n"
             "8) If the document mentions market cap or market capitalization (in Cr or Rs), extract as market_cap_cr (number in Crore).\n"
-            "9) For order_value_cr use ONLY 'Broad commercial consideration' or 'size of the order(s)/contract(s)' (convert to Crore). Do NOT use 'Value of the order(s)/contract(s)' — it often has data entry errors (extra zeros)."
+            "9) For order_value_cr: prefer (in priority order): (a) 'Broad commercial consideration', (b) 'size of the order(s)/contract(s)', (c) 'Value of the order(s)/contract(s)' as last resort if (a) and (b) are absent or N.A. Always convert to Crore. Add the source field name as an evidence_span."
         )
         for model_name in get_gemini_model_candidates():
             try:
