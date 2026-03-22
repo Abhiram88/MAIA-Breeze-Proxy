@@ -12,6 +12,4 @@ google-genai
 pytz
 pyyaml
 supabase
-gevent
-gevent-websocket
 pypdf

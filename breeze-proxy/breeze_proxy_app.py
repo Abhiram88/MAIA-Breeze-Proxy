@@ -1,3 +1,5 @@
+import eventlet
+eventlet.monkey_patch()
 import secrets
 import queue as _stdlib_queue
 from flask import Flask, request, jsonify
@@ -1598,21 +1600,24 @@ def _enrich_fundamentals(ai_client, model_name, symbol, company_name, event_date
         prompt = _FUNDAMENTALS_PROMPT.format(
             company_name=company_name, symbol=symbol, year_month=year_month
         )
-        response = ai_client.models.generate_content(
-            model=model_name,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())],
-                temperature=0.1,
-            ),
-        )
-        raw = re.sub(r'^```(?:json)?\s*', '', response.text.strip())
-        raw = re.sub(r'\s*```$', '', raw)
-        result = json.loads(raw)
-        mkt = _to_float(result.get("market_cap_cr"))
-        if mkt > 0:
-            logger.info(f"[Reg30] Fundamentals {symbol}: mktcap=Rs.{mkt}Cr as_of={result.get('data_as_of','?')}")
-        return result
+        with eventlet.Timeout(15, False):
+            response = ai_client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                    temperature=0.1,
+                ),
+            )
+            raw = re.sub(r'^```(?:json)?\s*', '', response.text.strip())
+            raw = re.sub(r'\s*```$', '', raw)
+            result = json.loads(raw)
+            mkt = _to_float(result.get("market_cap_cr"))
+            if mkt > 0:
+                logger.info(f"[Reg30] Fundamentals {symbol}: mktcap=Rs.{mkt}Cr as_of={result.get('data_as_of','?')}")
+            return result
+        logger.warning(f"[Reg30] Fundamentals timeout for {symbol} — skipping")
+        return {}
     except Exception as e:
         logger.warning(f"[Reg30] Fundamentals enrichment failed for {symbol}: {e}")
         return {}
@@ -1738,17 +1743,25 @@ def reg30_analyze():
             nse_ticker=symbol or company_name,
             published_date=event_date,
         )
-        if pdf_bytes:
+        attachment_text = (candidate.get('attachment_text') or '').strip()
+
+        # Priority: attachment_text (pre-extracted clean text) > PDF bytes > raw_text summary
+        if attachment_text and len(attachment_text) > 300:
+            content_parts = [
+                types.Part(text=f"Announcement text:\n{attachment_text}\n\n{prompt_text}")
+            ]
+            logger.info(f"[Reg30] Using attachment_text ({len(attachment_text)}c) for {symbol}")
+        elif pdf_bytes:
             content_parts = [
                 types.Part(inline_data=types.Blob(data=pdf_bytes, mime_type='application/pdf')),
                 types.Part(text=prompt_text),
             ]
-        elif raw_text:
-            if len(raw_text) < 20:
-                return jsonify({"error": "No PDF accessible and summary too short"}), 400
+            logger.info(f"[Reg30] Using PDF bytes ({len(pdf_bytes)}b) for {symbol}")
+        elif raw_text and len(raw_text) > 20:
             content_parts = [types.Part(text=f"Announcement Summary:\n{raw_text}\n\n{prompt_text}")]
+            logger.warning(f"[Reg30] Falling back to raw_text for {symbol} — quality may be low")
         else:
-            return jsonify({"error": "No PDF URL provided and no summary text available"}), 400
+            return jsonify({"error": "No usable text content — no attachment_text, PDF, or summary"}), 400
 
         # ── Gemini extraction ──────────────────────────────────────────────────
         result = None
