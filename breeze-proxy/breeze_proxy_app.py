@@ -1247,13 +1247,12 @@ def nse_announcements():
     if request.method == 'OPTIONS':
         return jsonify(success=True)
     try:
-        import requests as req_lib
         from datetime import datetime, timedelta
 
         payload = request.get_json(silent=True) or {}
         from_date_str = payload.get('from_date', '')
 
-        # Parse from_date (expects YYYY-MM-DD); cap range at 90 days
+        # Parse from_date (YYYY-MM-DD); default 7 days back; cap at 90 days
         try:
             from_dt = datetime.strptime(from_date_str, '%Y-%m-%d')
         except (ValueError, TypeError):
@@ -1263,106 +1262,64 @@ def nse_announcements():
             from_dt = to_dt - timedelta(days=90)
 
         from_str = from_dt.strftime('%Y-%m-%d')
-        to_str = to_dt.strftime('%Y-%m-%d')
+        to_str   = to_dt.strftime('%Y-%m-%d')
 
-        api_url = get_secret('STOCKINSIGHTS_API_URL') or 'https://stockinsights-ai-main-95a26a0.zuplo.app/api/in/v0/documents/announcement'
+        api_url = 'https://stockinsights-ai-main-95a26a0.zuplo.app/api/in/v0/documents/announcement'
         api_key = get_secret('STOCKINSIGHTS_API_KEY')
         if not api_key:
             logger.error('STOCKINSIGHTS_API_KEY not configured')
             return jsonify({'error': 'StockInsights API key not configured', 'announcements': []}), 500
 
         req_headers = {'Authorization': f'Bearer {api_key}'}
+        PAGE_LIMIT  = 20
+        all_items   = []
+        page        = 1
 
-        # Fetch all pages (max 50/page) up to a reasonable cap
-        all_items = []
-        page = 1
-        PAGE_LIMIT = 50
-        MAX_PAGES = 10
-        while page <= MAX_PAGES:
+        while True:
             params = {
+                'announcement_type_id': '8',
                 'from_date': from_str,
-                'to_date': to_str,
-                'announcement_type_id': '8',  # Contracts/Orders
-                'limit': PAGE_LIMIT,
-                'page': page,
+                'to_date':   to_str,
+                'page':      page,
+                'limit':     PAGE_LIMIT,
             }
-            logger.info(f'StockInsights announcements page {page}: {from_str} → {to_str}')
-            resp = req_lib.get(api_url, params=params, headers=req_headers, timeout=30)
-            resp.raise_for_status()
-            raw = resp.json()
-            page_items = raw.get('data', []) if isinstance(raw, dict) else (raw if isinstance(raw, list) else [])
-            all_items.extend(page_items)
-            meta = raw.get('meta', {}) if isinstance(raw, dict) else {}
-            total = meta.get('total_count', len(page_items))
-            if len(all_items) >= total or len(page_items) < PAGE_LIMIT:
+            logger.info(f'StockInsights page {page}: {from_str} → {to_str}')
+            resp = requests.get(api_url, headers=req_headers, params=params, timeout=20)
+            if resp.status_code != 200:
+                logger.error(f'StockInsights HTTP {resp.status_code}: {resp.text[:200]}')
+                break
+            data    = resp.json()
+            records = data.get('data', [])
+            total   = data.get('meta', {}).get('total_count', 0)
+            all_items.extend(records)
+            if not records or len(all_items) >= total:
                 break
             page += 1
 
-        logger.info(f'StockInsights: fetched {len(all_items)} total announcements')
-
-        ORDER_KEYWORDS = {
-            'order', 'contract', 'bagged', 'awarded', 'award', 'secured',
-            'win', 'won', 'new business', 'agreement', 'mou', 'loa',
-            'letter of award', 'purchase order', 'work order', 'project',
-        }
-
-        def _is_order_event(text: str) -> bool:
-            return any(kw in text.lower() for kw in ORDER_KEYWORDS)
-
-        def _parse_date(raw_date: str) -> str:
-            raw_date = (raw_date or '').strip()
-            # ISO 8601: "2024-06-24T14:30:00+05:30" or "2024-06-24T14:30:00"
-            if len(raw_date) >= 10 and raw_date[4:5] == '-' and raw_date[7:8] == '-':
-                return raw_date[:10]
-            for fmt in ('%d-%b-%Y', '%d/%m/%Y', '%d-%m-%Y'):
-                try:
-                    return datetime.strptime(raw_date, fmt).strftime('%Y-%m-%d')
-                except (ValueError, TypeError):
-                    pass
-            return from_dt.strftime('%Y-%m-%d')
-
-        def _extract_nse_ticker(item: dict) -> str:
-            """Extract NSE ticker from exchange_tickers array, fall back to top-level ticker."""
-            for et in (item.get('exchange_tickers') or []):
-                if isinstance(et, dict) and et.get('exchange', '').upper() == 'NSE':
-                    return str(et.get('ticker', '')).strip()
-            # Top-level ticker may be "NSE:ZOMATO" — strip the prefix
-            raw_ticker = str(item.get('ticker') or '').strip()
-            if ':' in raw_ticker:
-                return raw_ticker.split(':', 1)[1]
-            return raw_ticker
+        logger.info(f'StockInsights: {len(all_items)} total records fetched')
 
         announcements = []
-        for item in all_items:
-            if not isinstance(item, dict):
+        skipped       = 0
+        for rec in all_items:
+            nse_ticker = next(
+                (t['ticker'] for t in rec.get('exchange_tickers', []) if t.get('exchange') == 'NSE'),
+                ''
+            )
+            if not nse_ticker:
+                skipped += 1
                 continue
-            ai = item.get('ai_insights') or {}
-            # Use AI summary + announcement type as the subject to filter on
-            subject = ' '.join(filter(None, [
-                str(ai.get('announcement_type') or ''),
-                str(ai.get('summary_header') or ''),
-                str(ai.get('summary_text') or '')[:200],
-            ]))
-            if not _is_order_event(subject):
-                continue
-
-            company_name = str(item.get('company_name') or '').strip()
-            nse_ticker = _extract_nse_ticker(item)
-            if not company_name or not nse_ticker:
-                continue
-
             announcements.append({
-                'company_name': company_name,
-                'nse_ticker': nse_ticker,
-                'published_date': _parse_date(str(item.get('published_date') or '')),
-                'source_link': str(item.get('source_link') or '').strip(),
+                'company_name':   rec.get('company_name', ''),
+                'nse_ticker':     nse_ticker,
+                'published_date': (rec.get('published_date') or '')[:10],
+                'source_link':    rec.get('source_link', ''),
             })
 
-        logger.info(f'NSE announcements via StockInsights: {len(announcements)} order events from {len(all_items)} total')
+        logger.info(f'NSE announcements: {len(announcements)} NSE records, {skipped} BSE-only skipped')
         return jsonify({'announcements': announcements})
 
     except Exception as e:
-        logger.warning(f'NSE announcements endpoint error: {e}')
+        logger.exception(f'NSE announcements endpoint error: {e}')
         return jsonify({'error': str(e), 'announcements': []}), 500
 
 
