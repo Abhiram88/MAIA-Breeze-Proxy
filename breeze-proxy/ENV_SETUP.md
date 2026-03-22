@@ -12,9 +12,18 @@ This application uses a `.env` file to store sensitive credentials instead of Go
 
 2. **Edit `.env` with your credentials:**
    ```bash
-   # Edit the .env file with your actual credentials
    nano .env  # or use your preferred editor
    ```
+
+   **Alternative: YAML config file**
+   You can also create an `env.yaml` file in the `breeze-proxy/` directory:
+   ```yaml
+   BREEZE_API_KEY: "your_key"
+   BREEZE_API_SECRET: "your_secret"
+   GEMINI_API_KEY: "your_gemini_key"
+   # ... other keys
+   ```
+   The app checks environment variables first, then falls back to `env.yaml`.
 
 3. **Required Environment Variables:**
    - `BREEZE_API_KEY` - #8#

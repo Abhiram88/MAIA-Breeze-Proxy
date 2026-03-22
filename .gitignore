@@ -16,15 +16,21 @@ venv/
 env/
 ENV/
 
-# Environment variables
+# Environment variables & config
 .env
 .env.local
+env.yaml
+config.yaml
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+
+# Logs
+logs/
+*.log
 
 # OS
 .DS_Store

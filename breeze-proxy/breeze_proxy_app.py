@@ -21,7 +21,7 @@ load_dotenv()
 
 # Load YAML config file (if present) as a fallback for secrets
 _yaml_config = {}
-_CONFIG_PATH = os.environ.get("CONFIG_PATH", "config.yaml")
+_CONFIG_PATH = os.environ.get("CONFIG_PATH", "env.yaml")
 if os.path.isfile(_CONFIG_PATH):
     try:
         with open(_CONFIG_PATH, "r") as f:
