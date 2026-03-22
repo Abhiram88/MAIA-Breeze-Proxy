@@ -30,3 +30,19 @@ ENV/
 .DS_Store
 Thumbs.db
 .git-credentials
+
+# Cloud Shell / system files
+.bash_history
+.bash_logout
+.bashrc
+.profile
+.codeoss/
+.config/
+.docker/
+.local/
+.npm/
+.rustup/
+.sudo_as_admin_successful
+.lesshst
+.gitconfig
+README-cloudshell.txt
