@@ -1,6 +1,7 @@
 flask
 flask-cors
 breeze_connect
+google-cloud-secret-manager
 requests
 gunicorn
 python-dotenv
@@ -8,5 +9,9 @@ Flask-SocketIO
 eventlet
 python-engineio
 python-socketio
+google-genai
+pytz
+pyyaml
+supabase
 gevent
 gevent-websocket

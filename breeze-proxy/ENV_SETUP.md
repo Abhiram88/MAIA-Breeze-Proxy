@@ -17,12 +17,14 @@ This application uses a `.env` file to store sensitive credentials instead of Go
    ```
 
 3. **Required Environment Variables:**
-   - `BREEZE_API_KEY` - Your Breeze API key
-   - `BREEZE_API_SECRET` - Your Breeze API secret
-   - `BREEZE_PROXY_ADMIN_KEY` - Admin key for proxy authentication
-   - `GEMINI_API_KEY` - Your Gemini API key
-   - `SUPABASE_ANON_KEY` - Your Supabase anonymous key
-   - `SUPABASE_URL` - Your Supabase URL
+   - `BREEZE_API_KEY` - #8#
+   - `BREEZE_API_SECRET` - ####
+   - `BREEZE_PROXY_ADMIN_KEY` - ###$
+   - `GEMINI_API_KEY` - #
+   - `SUPABASE_KEY` - ##
+   - `SUPABASE_URL` - ht##
+   - `STOCKINSIGHTS_API_URL` - ##ment
+   - `STOCKINSIGHTS_API_KEY` - zp#########
 
 4. **Security Notes:**
    - ✅ The `.env` file is included in `.gitignore` and will NOT be committed
