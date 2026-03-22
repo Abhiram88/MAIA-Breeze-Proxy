@@ -14,6 +14,7 @@ import yaml
 import re
 from google import genai
 from google.genai import types
+import google.auth
 from supabase import create_client, Client
 
 # Load environment variables from .env file for local testing
@@ -188,7 +189,11 @@ def initialize_supabase():
 
 
 def _detect_gcp_project() -> str:
-    """Return a GCP project ID from explicit config, then ADC, then metadata server."""
+    """Return a GCP project ID, checking in order:
+    1. Explicit GCP_PROJECT_ID env var / env.yaml value
+    2. Application Default Credentials (auto-detected on Cloud Run, GCE, Cloud Shell)
+    Returns empty string if no project can be determined (triggers API key fallback).
+    """
     # 1. Explicit env var / yaml
     project = get_secret("GCP_PROJECT_ID")
     if project:
@@ -196,7 +201,6 @@ def _detect_gcp_project() -> str:
 
     # 2. Application Default Credentials (works on Cloud Run, GCE, Cloud Shell)
     try:
-        import google.auth
         _creds, adc_project = google.auth.default()
         if adc_project:
             logger.info(f"Auto-detected GCP project from ADC: {adc_project}")
