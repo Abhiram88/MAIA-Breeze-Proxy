@@ -187,12 +187,32 @@ def initialize_supabase():
     return supabase
 
 
+def _detect_gcp_project() -> str:
+    """Return a GCP project ID from explicit config, then ADC, then metadata server."""
+    # 1. Explicit env var / yaml
+    project = get_secret("GCP_PROJECT_ID")
+    if project:
+        return project
+
+    # 2. Application Default Credentials (works on Cloud Run, GCE, Cloud Shell)
+    try:
+        import google.auth
+        _creds, adc_project = google.auth.default()
+        if adc_project:
+            logger.info(f"Auto-detected GCP project from ADC: {adc_project}")
+            return adc_project
+    except Exception:
+        pass
+
+    return ""
+
+
 def initialize_ai_clients():
     """Initializes the Gemini AI and Supabase clients."""
     global ai_client
     if ai_client is None:
         try:
-            gcp_project_id = get_secret("GCP_PROJECT_ID")
+            gcp_project_id = _detect_gcp_project()
             vertex_location = os.environ.get("VERTEX_LOCATION", "us-central1")
 
             if gcp_project_id:
@@ -206,7 +226,7 @@ def initialize_ai_clients():
                     logger.error("GCP_PROJECT_ID not set and GEMINI_API_KEY is missing!")
                 else:
                     ai_client = genai.Client(api_key=gemini_api_key)
-                    logger.info("Gemini AI client initialized (API key).")
+                    logger.info("Gemini AI client initialized (API key fallback).")
         except Exception as e:
             logger.error(f"Gemini AI client initialization error: {e}")
 
