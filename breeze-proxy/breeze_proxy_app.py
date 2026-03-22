@@ -1195,6 +1195,9 @@ def parse_attachment():
         url = (data.get('url') or '').strip()
         if not url or not url.startswith('http'):
             return jsonify({"error": "Missing or invalid url"}), 400
+        # PDFs cannot be parsed as HTML — return empty immediately rather than timing out
+        if url.lower().endswith('.pdf') or url.lower().endswith('.pdf?'):
+            return jsonify({"text": "", "error": "PDF files are not supported for text extraction"})
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -1202,20 +1205,13 @@ def parse_attachment():
         }
         if 'nseindia.com' in url or 'nsearchives.nseindia.com' in url:
             headers['Referer'] = 'https://www.nseindia.com/'
-        import time
-        last_err = None
-        for attempt in range(2):
-            try:
-                r = req.get(url, headers=headers, timeout=35)
-                r.raise_for_status()
-                html = r.text
-                break
-            except Exception as e:
-                last_err = e
-                if attempt == 0:
-                    time.sleep(2)
-        else:
-            raise last_err
+        r = req.get(url, headers=headers, timeout=15)
+        r.raise_for_status()
+        # Check content-type — bail out early on PDFs and binary files
+        ct = r.headers.get('Content-Type', '').lower()
+        if 'pdf' in ct or 'octet-stream' in ct:
+            return jsonify({"text": "", "error": "Binary/PDF response — not extractable as text"})
+        html = r.text
         # Strip tags and collapse whitespace for text extraction
         text = re.sub(r'<script[^>]*>[\s\S]*?</script>', ' ', html, flags=re.IGNORECASE)
         text = re.sub(r'<style[^>]*>[\s\S]*?</style>', ' ', text, flags=re.IGNORECASE)
@@ -1309,11 +1305,14 @@ def nse_announcements():
             if not nse_ticker:
                 skipped += 1
                 continue
+            ai = rec.get('ai_insights') or {}
             announcements.append({
                 'company_name':   rec.get('company_name', ''),
                 'nse_ticker':     nse_ticker,
                 'published_date': (rec.get('published_date') or '')[:10],
                 'source_link':    rec.get('source_link', ''),
+                'summary_text':   ai.get('summary_text') or ai.get('summary_header') or '',
+                'sentiment':      ai.get('sentiment') or '',
             })
 
         logger.info(f'NSE announcements: {len(announcements)} NSE records, {skipped} BSE-only skipped')
