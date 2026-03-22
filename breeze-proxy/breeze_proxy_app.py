@@ -1464,11 +1464,22 @@ def _validate_extraction(ext, summary, family):
         else:
             e["order_value_cr"] = ov_f
     if not e.get("order_value_cr") and family in ("ORDER_CONTRACT", "ORDER_PIPELINE"):
+        # Try "Rs. 500 Crore" style
         m = re.search(r'(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d+)?)\s*(?:Cr(?:ore)?s?)', summary, re.IGNORECASE)
         if m:
             val = _to_float(m.group(1))
             if 0 < val < 500_000:
                 e["order_value_cr"] = val
+        # Try raw rupee amount "Rs. 1,92,98,500/-" → convert to Crores
+        if not e.get("order_value_cr"):
+            m2 = re.search(r'(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d+)?)\s*/[-–]?', summary, re.IGNORECASE)
+            if m2:
+                raw_val = _to_float(m2.group(1))
+                if raw_val > 10_00_000:  # only if it looks like rupees (> 10 lakh)
+                    val_cr = raw_val / 1_00_00_000
+                    if 0 < val_cr < 500_000:
+                        e["order_value_cr"] = round(val_cr, 4)
+                        e["_order_value_from_rupees"] = True
     # order_type
     ot = (e.get("order_type") or "").upper()
     valid_types = {"CONSTRUCTION", "SUPPLY", "SERVICES", "SUB-CONTRACT", "MIXED"}
@@ -1563,6 +1574,50 @@ def _calculate_score(family, ext, confidence):
             "execution_months": exec_months, "order_type": order_type}
 
 
+_FUNDAMENTALS_PROMPT = """What was the approximate market capitalization of {company_name} (NSE: {symbol}) in {year_month}?
+
+Also provide PAT (profit after tax) and Networth for the nearest quarter to {year_month}.
+
+Return ONLY this JSON:
+{{
+  "market_cap_cr": <number in Crores or null>,
+  "pat_cr": <number in Crores or null>,
+  "networth_cr": <number in Crores or null>,
+  "data_as_of": "<quarter string>"
+}}"""
+
+def _enrich_fundamentals(ai_client, model_name, symbol, company_name, event_date):
+    """Fetch market_cap_cr, pat_cr, networth_cr via Gemini Google Search grounding.
+    Ported from Bulk_reg30_processor.py gemini_enrich_fundamentals().
+    Only called for ORDER events with impact_score >= 20."""
+    try:
+        try:
+            year_month = datetime.datetime.strptime(event_date, "%Y-%m-%d").strftime("%B %Y")
+        except Exception:
+            year_month = event_date
+        prompt = _FUNDAMENTALS_PROMPT.format(
+            company_name=company_name, symbol=symbol, year_month=year_month
+        )
+        response = ai_client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                tools=[types.Tool(google_search=types.GoogleSearch())],
+                temperature=0.1,
+            ),
+        )
+        raw = re.sub(r'^```(?:json)?\s*', '', response.text.strip())
+        raw = re.sub(r'\s*```$', '', raw)
+        result = json.loads(raw)
+        mkt = _to_float(result.get("market_cap_cr"))
+        if mkt > 0:
+            logger.info(f"[Reg30] Fundamentals {symbol}: mktcap=Rs.{mkt}Cr as_of={result.get('data_as_of','?')}")
+        return result
+    except Exception as e:
+        logger.warning(f"[Reg30] Fundamentals enrichment failed for {symbol}: {e}")
+        return {}
+
+
 # Semantic system instruction — from Bulk_reg30_processor.py
 _EXTRACTION_SYSTEM = """You are an expert Indian equity analyst reading NSE Regulation 30 corporate announcements.
 
@@ -1586,8 +1641,13 @@ RULES:
 1. Never fabricate numbers. If something is genuinely absent, return null.
 2. For contract value, prefer the "Broad consideration" or "size of contract" field if present.
    Otherwise extract from any clear statement in the text (e.g. "valued at Rs. 500 crore").
-3. Return STRICT JSON only — no markdown, no explanation outside the JSON.
-4. Confidence: your honest 0.0–1.0 estimate of extraction quality.
+3. CRITICAL — XBRL structured forms often have a secondary table where field values show "NA" or "N/A".
+   This is a form default, NOT the actual value. ALWAYS read the full cover letter, letter body,
+   and annexures first. The cover letter takes precedence over any structured XBRL table entry.
+   If the cover letter says "Rs. 1,92,98,500/-" but the XBRL table says "NA", use the cover letter value.
+4. When values are in raw Rupees (e.g. "Rs. 1,92,98,500/-"), convert to Crores by dividing by 1,00,00,000.
+5. Return STRICT JSON only — no markdown, no explanation outside the JSON.
+6. Confidence: your honest 0.0–1.0 estimate of extraction quality.
    Use < 0.7 if the document is unclear, scanned poorly, or key fields are missing.
 """
 
@@ -1748,10 +1808,32 @@ def reg30_analyze():
         resolved_symbol  = (ext.get('nse_symbol') or ext.get('symbol') or symbol or '').strip().upper()
         resolved_company = (ext.get('company_name') or company_name or 'Unknown').strip()
 
+        # ── Fundamentals enrichment (ORDER events above threshold) ─────────────
+        market_cap_cr = _to_float(ext.get('market_cap_cr')) or None
+        pat_cr        = None
+        networth_cr   = _to_float(ext.get('networth_cr')) or None
+
+        if family in ('ORDER_CONTRACT', 'ORDER_PIPELINE') and scoring['impact_score'] >= 20:
+            enrich_symbol  = resolved_symbol or symbol or company_name
+            enrich_company = resolved_company or company_name
+            model_for_enrich = get_gemini_model_candidates()[0]
+            fund = _enrich_fundamentals(ai_client, model_for_enrich, enrich_symbol, enrich_company, event_date)
+            if fund:
+                mkt = _to_float(fund.get('market_cap_cr')) or None
+                if mkt:
+                    market_cap_cr = mkt
+                    ext['market_cap_cr'] = mkt
+                    prev_score = scoring['impact_score']
+                    scoring = _calculate_score(family, ext, confidence)
+                    if scoring['impact_score'] != prev_score:
+                        logger.info(f"[Reg30] Rescore {resolved_symbol}: {prev_score}→{scoring['impact_score']} (mktcap=Rs.{mkt}Cr)")
+                pat_cr      = _to_float(fund.get('pat_cr')) or None
+                networth_cr = _to_float(fund.get('networth_cr')) or None
+
         logger.info(
             f"[Reg30] {resolved_symbol} | family={family} stage={ext.get('stage')} "
             f"order_cr={ext.get('order_value_cr')} exec_months={scoring.get('execution_months')} "
-            f"score={scoring['impact_score']} rec={scoring['action_recommendation']}"
+            f"mktcap={market_cap_cr} score={scoring['impact_score']} rec={scoring['action_recommendation']}"
         )
 
         return jsonify({
@@ -1769,6 +1851,9 @@ def reg30_analyze():
             "conversion_bonus":      scoring.get("conversion_bonus", 0),
             "execution_months":      scoring.get("execution_months"),
             "order_type":            scoring.get("order_type"),
+            "market_cap_cr":         market_cap_cr,
+            "pat_cr":                pat_cr,
+            "networth_cr":           networth_cr,
             "_validation_issues":    v_issues or [],
             "_proxy_scored":         True,
         })
