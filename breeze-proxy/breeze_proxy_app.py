@@ -1749,9 +1749,6 @@ def reg30_analyze():
             except Exception as e:
                 logger.warning(f"[Reg30] PDF fetch failed for {source_link[:80]}: {e}")
 
-        if not pdf_bytes and (not fallback_text or len(fallback_text) < 20):
-            return jsonify({"error": "No PDF available and no usable text — provide source_link or attachment_text"}), 400
-
         logger.info(f"[Reg30] Analyzing {symbol} | pdf={'yes' if pdf_bytes else 'no'} text={len(fallback_text)}c")
 
         # ── Build Gemini content ───────────────────────────────────────────────
@@ -1760,15 +1757,28 @@ def reg30_analyze():
             nse_ticker=symbol or company_name,
             published_date=event_date,
         )
-        if pdf_bytes:
-            # Multimodal: send raw PDF bytes + extraction prompt — let Gemini read the document
+        attachment_text = (candidate.get('attachment_text') or '').strip()
+
+        if attachment_text and len(attachment_text) > 300:
+            # StockInsights pre-extracted clean text — more reliable than raw PDF bytes
+            # for scanned/encoded PDFs. Use this as primary input.
+            content_parts = [
+                types.Part(text=f"Announcement text:\n{attachment_text}\n\n{prompt_text}")
+            ]
+            logger.info(f"[Reg30] Using attachment_text ({len(attachment_text)}c) for {symbol}")
+        elif pdf_bytes:
+            # No clean pre-extracted text — send raw PDF bytes to Gemini
             content_parts = [
                 types.Part(inline_data=types.Blob(data=pdf_bytes, mime_type="application/pdf")),
                 types.Part(text=prompt_text),
             ]
-        else:
-            # Text-only fallback when PDF is not available
+            logger.info(f"[Reg30] Using PDF bytes ({len(pdf_bytes)}b) for {symbol}")
+        elif fallback_text and len(fallback_text) > 20:
+            # Last resort: short summary text only
             content_parts = [types.Part(text=f"Announcement text:\n{fallback_text}\n\n{prompt_text}")]
+            logger.warning(f"[Reg30] Using fallback summary text for {symbol} — quality may be low")
+        else:
+            return jsonify({"error": "No usable content — no attachment_text, PDF, or summary"}), 400
 
         # ── Gemini extraction ──────────────────────────────────────────────────
         result = None
