@@ -1311,7 +1311,8 @@ def nse_announcements():
         skipped       = 0
         for rec in all_items:
             nse_ticker = next(
-                (t['ticker'] for t in rec.get('exchange_tickers', []) if t.get('exchange') == 'NSE'),
+                (t.get('ticker', '') for t in rec.get('exchange_tickers', [])
+                 if isinstance(t, dict) and t.get('exchange') == 'NSE'),
                 ''
             )
             if not nse_ticker:
