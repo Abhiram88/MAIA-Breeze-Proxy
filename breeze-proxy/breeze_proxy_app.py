@@ -1718,62 +1718,33 @@ def reg30_analyze():
     if not ai_client:
         return jsonify({"error": "Gemini AI client not initialized"}), 500
     try:
-        import requests as _req
         data = request.get_json(silent=True) or {}
         candidate = data.get('candidate') or {}
 
         company_name   = (candidate.get('company_name') or 'Unknown').strip()
         symbol         = (candidate.get('symbol') or '').strip()
-        source_link    = (candidate.get('attachment_link') or candidate.get('source_link') or '').strip()
-        raw_text       = (candidate.get('raw_text') or '').strip()
         published_date = (candidate.get('event_date') or candidate.get('published_date') or '').strip()
         event_date     = _norm_date(published_date)
         event_datetime = _norm_datetime(published_date)
 
-        # ── Fetch PDF bytes ────────────────────────────────────────────────────
-        # StockInsights S3 PDFs are scanned images — Gemini cannot read them as PDF bytes.
-        # Skip the fetch entirely; we rely on attachment_text (pre-extracted by StockInsights).
-        is_stockinsights = 'stockinsights-ai.s3' in source_link
-        pdf_bytes = None
-        if source_link and source_link.startswith('http') and not is_stockinsights:
-            try:
-                r = _req.get(source_link,
-                             headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/pdf,*/*'},
-                             timeout=15)
-                if r.status_code == 200 and len(r.content) >= 500 and r.content[:4] == b'%PDF':
-                    pdf_bytes = r.content
-                    logger.info(f"[Reg30] PDF fetched: {len(pdf_bytes)}b {source_link[:80]}")
-                else:
-                    logger.warning(f"[Reg30] PDF fetch failed HTTP {r.status_code} or not PDF: {source_link[:80]}")
-            except Exception as e:
-                logger.warning(f"[Reg30] PDF fetch error: {e}")
+        # Use the best available text — attachment_text (full OCR) > raw_text (AI summary)
+        # No PDF fetching: StockInsights PDFs are scanned images Gemini cannot read.
+        best_text = (
+            (candidate.get('attachment_text') or '').strip() or
+            (candidate.get('raw_text') or '').strip()
+        )
+        if not best_text or len(best_text) < 20:
+            return jsonify({"error": "No usable text — send attachment_text or raw_text"}), 400
 
-        # ── Build Gemini content parts ─────────────────────────────────────────
+        logger.info(f"[Reg30] Analyzing {symbol} | text={len(best_text)}c")
+
+        # ── Build Gemini content ───────────────────────────────────────────────
         prompt_text = _EXTRACTION_PROMPT.format(
             company_name=company_name,
             nse_ticker=symbol or company_name,
             published_date=event_date,
         )
-        attachment_text = (candidate.get('attachment_text') or '').strip()
-
-        # Priority: attachment_text (pre-extracted full text) > PDF bytes > raw_text summary
-        # For StockInsights S3 URLs, PDF bytes are skipped (scanned images); text is the only path.
-        if attachment_text and len(attachment_text) > 100:
-            content_parts = [
-                types.Part(text=f"Announcement text:\n{attachment_text}\n\n{prompt_text}")
-            ]
-            logger.info(f"[Reg30] Using attachment_text ({len(attachment_text)}c) for {symbol}")
-        elif pdf_bytes:
-            content_parts = [
-                types.Part(inline_data=types.Blob(data=pdf_bytes, mime_type='application/pdf')),
-                types.Part(text=prompt_text),
-            ]
-            logger.info(f"[Reg30] Using PDF bytes ({len(pdf_bytes)}b) for {symbol}")
-        elif raw_text and len(raw_text) > 20:
-            content_parts = [types.Part(text=f"Announcement Summary:\n{raw_text}\n\n{prompt_text}")]
-            logger.warning(f"[Reg30] Falling back to raw_text for {symbol} — quality may be low")
-        else:
-            return jsonify({"error": "No usable text content — no attachment_text, PDF, or summary"}), 400
+        content_parts = [types.Part(text=f"Announcement text:\n{best_text}\n\n{prompt_text}")]
 
         # ── Gemini extraction ──────────────────────────────────────────────────
         result = None
