@@ -1325,13 +1325,21 @@ def nse_announcements():
                 bullets = ' '.join(f'• {p}' for p in key_points if p)
                 if bullets:
                     summary = f"{summary} {bullets}".strip()
+            # Full document text from StockInsights (OCR-extracted PDF text) — preferred over PDF bytes
+            full_text = (
+                rec.get('text_content') or rec.get('full_text') or
+                rec.get('attachment_text') or rec.get('body') or
+                rec.get('content') or rec.get('document_text') or
+                ai.get('full_text') or ai.get('document_text') or ''
+            )
             announcements.append({
-                'company_name':   rec.get('company_name', ''),
-                'nse_ticker':     nse_ticker,
-                'published_date': (rec.get('published_date') or '')[:10],
-                'source_link':    rec.get('source_link', ''),
-                'summary_text':   summary,
-                'sentiment':      ai.get('sentiment') or '',
+                'company_name':    rec.get('company_name', ''),
+                'nse_ticker':      nse_ticker,
+                'published_date':  (rec.get('published_date') or '')[:10],
+                'source_link':     rec.get('source_link', ''),
+                'summary_text':    summary,
+                'sentiment':       ai.get('sentiment') or '',
+                'attachment_text': full_text,
             })
 
         logger.info(f'NSE announcements: {len(announcements)} NSE records, {skipped} BSE-only skipped')
@@ -1723,8 +1731,11 @@ def reg30_analyze():
         event_datetime = _norm_datetime(published_date)
 
         # ── Fetch PDF bytes ────────────────────────────────────────────────────
+        # StockInsights S3 PDFs are scanned images — Gemini cannot read them as PDF bytes.
+        # Skip the fetch entirely; we rely on attachment_text (pre-extracted by StockInsights).
+        is_stockinsights = 'stockinsights-ai.s3' in source_link
         pdf_bytes = None
-        if source_link and source_link.startswith('http'):
+        if source_link and source_link.startswith('http') and not is_stockinsights:
             try:
                 r = _req.get(source_link,
                              headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/pdf,*/*'},
@@ -1745,8 +1756,9 @@ def reg30_analyze():
         )
         attachment_text = (candidate.get('attachment_text') or '').strip()
 
-        # Priority: attachment_text (pre-extracted clean text) > PDF bytes > raw_text summary
-        if attachment_text and len(attachment_text) > 300:
+        # Priority: attachment_text (pre-extracted full text) > PDF bytes > raw_text summary
+        # For StockInsights S3 URLs, PDF bytes are skipped (scanned images); text is the only path.
+        if attachment_text and len(attachment_text) > 100:
             content_parts = [
                 types.Part(text=f"Announcement text:\n{attachment_text}\n\n{prompt_text}")
             ]
