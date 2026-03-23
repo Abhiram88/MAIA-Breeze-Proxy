@@ -1753,7 +1753,7 @@ def reg30_analyze():
                         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                         'Accept': 'application/pdf,text/html,*/*;q=0.8',
                     }
-                    if hostname.endswith('nseindia.com'):
+                    if hostname in ('nseindia.com', 'www.nseindia.com', 'nsearchives.nseindia.com'):
                         fetch_headers['Referer'] = 'https://www.nseindia.com/'
                     r = req.get(source_link, headers=fetch_headers, timeout=25)
                     r.raise_for_status()
