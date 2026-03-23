@@ -1727,16 +1727,40 @@ def reg30_analyze():
         event_date     = _norm_date(published_date)
         event_datetime = _norm_datetime(published_date)
 
-        # Use the best available text — attachment_text (full OCR) > raw_text (AI summary)
-        # No PDF fetching: StockInsights PDFs are scanned images Gemini cannot read.
-        best_text = (
-            (candidate.get('attachment_text') or '').strip() or
-            (candidate.get('raw_text') or '').strip()
+        source_link = (candidate.get('source_link') or candidate.get('attachment_url') or '').strip()
+        summary_text = (candidate.get('raw_text') or candidate.get('summary_text') or '').strip()
+        fallback_text = (
+            (candidate.get('attachment_text') or '').strip() or summary_text
         )
-        if not best_text or len(best_text) < 20:
-            return jsonify({"error": "No usable text — send attachment_text or raw_text"}), 400
 
-        logger.info(f"[Reg30] Analyzing {symbol} | text={len(best_text)}c")
+        # ── Fetch raw PDF bytes from source_link ──────────────────────────────
+        # Gemini is multimodal — send the PDF directly, do NOT parse/extract text
+        # in Python. Let Gemini read the document natively.
+        pdf_bytes = None
+        if source_link and source_link.startswith('http'):
+            try:
+                import requests as req
+                fetch_headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    'Accept': 'application/pdf,text/html,*/*;q=0.8',
+                }
+                if 'nseindia.com' in source_link or 'nsearchives.nseindia.com' in source_link:
+                    fetch_headers['Referer'] = 'https://www.nseindia.com/'
+                r = req.get(source_link, headers=fetch_headers, timeout=25)
+                r.raise_for_status()
+                ct = r.headers.get('Content-Type', '').lower()
+                if 'pdf' in ct or source_link.lower().split('?')[0].endswith('.pdf'):
+                    pdf_bytes = r.content
+                    logger.info(f"[Reg30] Fetched PDF: {len(pdf_bytes)} bytes from {source_link[:80]}")
+                else:
+                    logger.info(f"[Reg30] source_link is not PDF (ct={ct}), will use text fallback")
+            except Exception as e:
+                logger.warning(f"[Reg30] PDF fetch failed for {source_link[:80]}: {e}")
+
+        if not pdf_bytes and (not fallback_text or len(fallback_text) < 20):
+            return jsonify({"error": "No PDF available and no usable text — provide source_link or attachment_text"}), 400
+
+        logger.info(f"[Reg30] Analyzing {symbol} | pdf={'yes' if pdf_bytes else 'no'} text={len(fallback_text)}c")
 
         # ── Build Gemini content ───────────────────────────────────────────────
         prompt_text = _EXTRACTION_PROMPT.format(
@@ -1744,7 +1768,15 @@ def reg30_analyze():
             nse_ticker=symbol or company_name,
             published_date=event_date,
         )
-        content_parts = [types.Part(text=f"Announcement text:\n{best_text}\n\n{prompt_text}")]
+        if pdf_bytes:
+            # Multimodal: send raw PDF bytes + extraction prompt — let Gemini read the document
+            content_parts = [
+                types.Part(inline_data=types.Blob(data=pdf_bytes, mime_type="application/pdf")),
+                types.Part(text=prompt_text),
+            ]
+        else:
+            # Text-only fallback when PDF is not available
+            content_parts = [types.Part(text=f"Announcement text:\n{fallback_text}\n\n{prompt_text}")]
 
         # ── Gemini extraction ──────────────────────────────────────────────────
         result = None
@@ -1774,7 +1806,7 @@ def reg30_analyze():
         summary    = result.get('summary') or ''
         confidence = float(result.get('confidence') or 0.5)
 
-        family = _classify_family(summary + ' ' + raw_text + ' ' + (raw_ext.get('order_type') or ''),
+        family = _classify_family(summary + ' ' + fallback_text + ' ' + (raw_ext.get('order_type') or ''),
                                    raw_ext.get('stage'))
         # Upgrade OTHER if extraction has evidence of a contract
         if family == 'OTHER' and (
