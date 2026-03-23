@@ -1317,29 +1317,11 @@ def nse_announcements():
             if not nse_ticker:
                 skipped += 1
                 continue
-            ai = rec.get('ai_insights') or {}
-            summary = ai.get('summary_text') or ai.get('summary_header') or ''
-            # Append key_points bullet list to summary so Gemini has more extraction context
-            key_points = ai.get('key_points') or ai.get('highlights') or []
-            if key_points and isinstance(key_points, list):
-                bullets = ' '.join(f'• {p}' for p in key_points if p)
-                if bullets:
-                    summary = f"{summary} {bullets}".strip()
-            # Full document text from StockInsights (OCR-extracted PDF text) — preferred over PDF bytes
-            full_text = (
-                rec.get('text_content') or rec.get('full_text') or
-                rec.get('attachment_text') or rec.get('body') or
-                rec.get('content') or rec.get('document_text') or
-                ai.get('full_text') or ai.get('document_text') or ''
-            )
             announcements.append({
                 'company_name':    rec.get('company_name', ''),
                 'nse_ticker':      nse_ticker,
                 'published_date':  (rec.get('published_date') or '')[:10],
                 'source_link':     rec.get('source_link', ''),
-                'summary_text':    summary,
-                'sentiment':       ai.get('sentiment') or '',
-                'attachment_text': full_text,
             })
 
         logger.info(f'NSE announcements: {len(announcements)} NSE records, {skipped} BSE-only skipped')
