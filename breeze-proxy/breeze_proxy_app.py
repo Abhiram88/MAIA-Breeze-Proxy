@@ -1318,11 +1318,25 @@ def nse_announcements():
             if not nse_ticker:
                 skipped += 1
                 continue
+            ai       = rec.get('ai_insights') or {}
+            summary  = ai.get('summary_text') or ai.get('summary_header') or ''
+            kp       = ai.get('key_points') or ai.get('highlights') or []
+            if kp and isinstance(kp, list):
+                bullets = ' '.join(f'• {p}' for p in kp if p)
+                if bullets:
+                    summary = f"{summary} {bullets}".strip()
+
+            # Also try to get document text from document_text field if available
+            doc_text = rec.get('document_text') or rec.get('attachment_text') or ''
+            full_text = doc_text if len(doc_text) > len(summary) else summary
+
             announcements.append({
                 'company_name':    rec.get('company_name', ''),
                 'nse_ticker':      nse_ticker,
-                'published_date':  (rec.get('published_date') or '')[:10],
+                'published_date':  rec.get('published_date') or '',
                 'source_link':     rec.get('source_link', ''),
+                'attachment_text': full_text,
+                'summary_text':    summary,
             })
 
         logger.info(f'NSE announcements: {len(announcements)} NSE records, {skipped} BSE-only skipped')
@@ -1652,6 +1666,10 @@ _EXTRACTION_PROMPT = """Read this NSE Reg30 announcement and extract all fields.
 Company (from dataset): {company_name}
 NSE Ticker (from dataset): {nse_ticker}
 Filing Date: {published_date}
+
+IMPORTANT: If both a cover letter and an Annexure are present, extract the order
+value from the cover letter first. The cover letter states the PRIMARY order value.
+The Annexure provides supporting details.
 
 Return this exact JSON structure:
 {{
