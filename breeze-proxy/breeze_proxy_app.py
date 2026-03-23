@@ -1740,20 +1740,29 @@ def reg30_analyze():
         if source_link and source_link.startswith('http'):
             try:
                 import requests as req
-                fetch_headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    'Accept': 'application/pdf,text/html,*/*;q=0.8',
-                }
-                if 'nseindia.com' in source_link or 'nsearchives.nseindia.com' in source_link:
-                    fetch_headers['Referer'] = 'https://www.nseindia.com/'
-                r = req.get(source_link, headers=fetch_headers, timeout=25)
-                r.raise_for_status()
-                ct = r.headers.get('Content-Type', '').lower()
-                if 'pdf' in ct or source_link.lower().split('?')[0].endswith('.pdf'):
-                    pdf_bytes = r.content
-                    logger.info(f"[Reg30] Fetched PDF: {len(pdf_bytes)} bytes from {source_link[:80]}")
+                from urllib.parse import urlparse
+                parsed_url = urlparse(source_link)
+                hostname = (parsed_url.hostname or '').lower()
+                # SSRF protection: block internal/private targets
+                if parsed_url.scheme not in ('http', 'https') or not hostname:
+                    logger.warning(f"[Reg30] Invalid source_link: {source_link[:80]}")
+                elif hostname in ('localhost', '127.0.0.1', '0.0.0.0', '::1', 'metadata.google.internal'):
+                    logger.warning(f"[Reg30] Blocked internal source_link: {source_link[:80]}")
                 else:
-                    logger.info(f"[Reg30] source_link is not PDF (ct={ct}), will use text fallback")
+                    fetch_headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'application/pdf,text/html,*/*;q=0.8',
+                    }
+                    if hostname.endswith('nseindia.com'):
+                        fetch_headers['Referer'] = 'https://www.nseindia.com/'
+                    r = req.get(source_link, headers=fetch_headers, timeout=25)
+                    r.raise_for_status()
+                    ct = r.headers.get('Content-Type', '').lower()
+                    if 'pdf' in ct or source_link.lower().split('?')[0].endswith('.pdf'):
+                        pdf_bytes = r.content
+                        logger.info(f"[Reg30] Fetched PDF: {len(pdf_bytes)} bytes from {source_link[:80]}")
+                    else:
+                        logger.info(f"[Reg30] source_link is not PDF (ct={ct}), will use text fallback")
             except Exception as e:
                 logger.warning(f"[Reg30] PDF fetch failed for {source_link[:80]}: {e}")
 
