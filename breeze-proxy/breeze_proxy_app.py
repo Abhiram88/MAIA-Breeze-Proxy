@@ -98,6 +98,13 @@ _tick_registry: dict[str, set] = {}   # symbol -> set(sid)
 _registry_symbol_map: dict[str, str] = {}   # canonical raw_symbol from Breeze -> frontend symbol
 _subscribed_breeze_codes: set[str] = set()  # breeze stock_codes with active subscriptions
 
+# Exchange-quote WebSocket ticks for individual stocks carry NO stock_code field.
+# Instead the tick has symbol="4.1!<token>" where token is the NSE instrument token.
+# This map is populated at subscription time using client.stock_script_dict_list[1]
+# (BreezeConnect's internal NSE equity token table: stock_code → token).
+# _dispatch_tick uses it to resolve "2885" → "RELIANCE".
+_token_to_std_map: dict[str, str] = {}   # NSE token string -> canonical frontend symbol
+
 # Thread-safe queue: Breeze's WebSocket reader thread puts raw ticks here;
 # the _run_tick_dispatcher greenlet drains the queue and calls socketio.emit.
 # This bridges Breeze's native/green thread context to the Flask-SocketIO event loop.
@@ -387,13 +394,25 @@ def _dispatch_tick(ticks: dict) -> None:
 
     Runs from the _run_tick_dispatcher greenlet — safe to call socketio.emit() here.
     """
-    raw = ticks.get("stock_code") or ticks.get("stock_name") or ticks.get("symbol") or ""
-    # Breeze sometimes sends stock_code in token format: "4.1!NIFTY" or "1!NIFTY"
-    token_match = re.match(r"^\d+\.?\d*!(.+)$", str(raw))
-    if token_match:
-        raw = token_match.group(1)
+    raw = ticks.get("stock_code") or ""
+    if not raw:
+        # Exchange-quote ticks for individual stocks have NO stock_code.
+        # The tick carries symbol="4.1!<token>" — extract the token and look it up.
+        sym_field = str(ticks.get("symbol", ""))
+        token_match_sym = re.match(r"^\d+\.?\d*!(.+)$", sym_field)
+        if token_match_sym:
+            raw = token_match_sym.group(1)  # e.g. "2885"
+        else:
+            # Last resort: full company name in stock_name (rarely useful)
+            raw = ticks.get("stock_name", "")
+    else:
+        # stock_code may itself be a token string like "4.1!NIFTY"
+        token_match = re.match(r"^\d+\.?\d*!(.+)$", str(raw))
+        if token_match:
+            raw = token_match.group(1)
 
-    resolved = _registry_symbol_map.get(canonical_symbol(raw)) or canonical_symbol(raw)
+    # Resolve: try _token_to_std_map first (numeric token), then _registry_symbol_map
+    resolved = _token_to_std_map.get(raw) or _registry_symbol_map.get(canonical_symbol(raw)) or canonical_symbol(raw)
     payload = normalize_tick_for_frontend(ticks, resolved)
 
     targets = list(_tick_registry.get(resolved, set()))
@@ -2042,6 +2061,17 @@ def track_watchlist(stock_list, proxy_key, sid):
         _registry_symbol_map[canonical_symbol(breeze_code)] = std
         # Also map the raw Breeze code directly (e.g. "NIFTY 50" with space)
         _registry_symbol_map[breeze_code.strip().upper()] = std
+        # For individual equity stocks, exchange-quote ticks have no stock_code — only
+        # symbol="4.1!<token>". Look up the NSE token from BreezeConnect's internal
+        # stock_script_dict_list[1] (NSE equities: stock_code → token) and cache it
+        # so _dispatch_tick can resolve "2885" → "RELIANCE" → std.
+        try:
+            nse_token = str(client.stock_script_dict_list[1].get(breeze_code, "") or "")
+            if nse_token:
+                _token_to_std_map[nse_token] = std
+                logger.info(f"[watchlist] Token map: {breeze_code} → token={nse_token} → std={std}")
+        except Exception as e:
+            logger.warning(f"[watchlist] Token lookup failed for {breeze_code}: {e}")
 
     # Register this SID for each symbol so _global_on_ticks dispatches to it.
     for symbol in stock_list:
@@ -2113,7 +2143,11 @@ def track_watchlist(stock_list, proxy_key, sid):
             logger.warning(f"Initial quote fetch failed for {symbol}: {e}")
 
     # Keep background task alive while this SID is connected.
-    # Ticks arrive via _global_on_ticks — no polling needed.
+    # WebSocket ticks via _global_on_ticks are the primary feed.
+    # Proxy-side REST polling every 30s is a fallback for illiquid stocks that rarely trade
+    # and for stocks whose exchange-quote ticks can't be resolved (token map not populated).
+    poll_tick = 0
+    non_nifty = [s for s in stock_list if canonical_symbol(s) != 'NIFTY']
     while True:
         try:
             if not socketio.server.manager.is_connected(sid, '/'):
@@ -2121,6 +2155,21 @@ def track_watchlist(stock_list, proxy_key, sid):
                 break
         except Exception:
             break
+        poll_tick += 1
+        if poll_tick % 6 == 0:  # every 30 s (6 × 5 s sleep)
+            for symbol in non_nifty:
+                std = canonical_symbol(symbol)
+                breeze_code = get_breeze_symbol(std)
+                try:
+                    res = client.get_quotes(stock_code=breeze_code, exchange_code="NSE", product_type="cash")
+                    raw = normalize_breeze_response(res)
+                    if isinstance(raw, list):
+                        raw = raw[0] if raw else None
+                    if raw and isinstance(raw, dict):
+                        payload = normalize_tick_for_frontend(dict(raw), std)
+                        socketio.emit('watchlist_update', payload, to=sid, namespace='/')
+                except Exception as e:
+                    logger.warning(f"[poll] get_quotes failed for {std}: {e}")
         socketio.sleep(5)
 
     # SID disconnected: remove from registry (also done in handle_disconnect, but belt-and-suspenders).
