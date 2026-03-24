@@ -376,7 +376,7 @@ def _global_on_ticks(ticks):
     from within the Flask-SocketIO event loop where socketio.emit() works correctly.
     """
     if ticks:
-        logger.debug(f"[on_ticks] Tick received: stock_code={ticks.get('stock_code')!r} last={ticks.get('last')!r}")
+        logger.info(f"[on_ticks] Tick received: stock_code={ticks.get('stock_code')!r} last={ticks.get('last')!r}")
         _tick_dispatch_queue.put(dict(ticks))
 
 
@@ -397,7 +397,7 @@ def _dispatch_tick(ticks: dict) -> None:
     payload = normalize_tick_for_frontend(ticks, resolved)
 
     targets = list(_tick_registry.get(resolved, set()))
-    logger.debug(f"[dispatch] symbol={resolved!r} ltp={payload.get('ltp')} targets={targets}")
+    logger.info(f"[dispatch] symbol={resolved!r} ltp={payload.get('ltp')} targets={targets} registry_keys={list(_tick_registry.keys())}")
 
     for sid in targets:
         try:
@@ -577,18 +577,24 @@ def get_quotes():
         return err_resp, status_code
 
     data = request.get_json() or {}
+    raw_code = data.get("stock_code") or ""
+    # Apply same Breeze symbol mapping used in subscribe_feeds so AHLUCONT→AHLCON etc. work
+    stock_code = get_breeze_symbol(canonical_symbol(raw_code)) if raw_code else raw_code
+    exchange_code = data.get("exchange_code", "NSE")
     try:
         res = client.get_quotes(
-            stock_code=data.get("stock_code"),
-            exchange_code=data.get("exchange_code", "NSE"),
+            stock_code=stock_code,
+            exchange_code=exchange_code,
             product_type="cash"
         )
         normalized = normalize_breeze_response(res)
         if normalized:
             return jsonify(wrap_success_payload(normalized)), 200
-        return jsonify({"error": "Empty response from Breeze", "raw": str(res)}), 500
+        logger.error(f"[get_quotes] Empty response for {stock_code}: raw={res!r}")
+        return jsonify({"error": "Empty response from Breeze", "stock_code": stock_code, "raw": str(res)}), 500
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"[get_quotes] Exception for {stock_code}: {e}")
+        return jsonify({"error": str(e), "stock_code": stock_code}), 500
 
 
 @app.route("/api/breeze/depth", methods=["POST"])
