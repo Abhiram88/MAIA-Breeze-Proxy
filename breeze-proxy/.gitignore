@@ -1,3 +1,4 @@
 env.yaml
-breeze-proxy/ENV_SETUP.md
-breeze-proxy/ENV_SETUP.md
+config.yaml
+logs/
+*.log

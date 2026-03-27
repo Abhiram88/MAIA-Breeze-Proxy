@@ -1,0 +1,8 @@
+# Excludes for Cloud Build — env.yaml is intentionally included (secrets for Cloud Run)
+config.yaml
+logs/
+*.log
+__pycache__/
+*.pyc
+*.pyo
+.env

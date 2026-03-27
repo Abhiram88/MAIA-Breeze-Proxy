@@ -1,6 +1,0 @@
-2026-02-04 12:36:50.795 [warning] Dir "/home/challapalli_abhiram/.pixi/envs" is not watchable (directory does not exist)
-2026-02-04 12:36:55.064 [info] Skipping ActivatedEnv Detection:  process.env.VSCODE_CLI !== '1'
-2026-02-04 12:36:55.083 [info] Python interpreter path: /bin/python
-2026-02-04 12:37:01.601 [info] > pyenv which python
-2026-02-04 12:37:01.601 [info] cwd: .
-2026-02-04 12:37:03.981 [info] Starting Jedi language server for challapalli_abhiram.

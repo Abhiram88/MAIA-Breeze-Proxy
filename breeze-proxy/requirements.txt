@@ -1,7 +1,6 @@
 flask
 flask-cors
 breeze_connect
-google-cloud-secret-manager
 requests
 gunicorn
 python-dotenv
@@ -13,5 +12,4 @@ google-genai
 pytz
 pyyaml
 supabase
-gevent
-gevent-websocket
+pypdf

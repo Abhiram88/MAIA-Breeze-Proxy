@@ -16,9 +16,11 @@ venv/
 env/
 ENV/
 
-# Environment variables
+# Environment variables & config
 .env
 .env.local
+env.yaml
+config.yaml
 
 # IDE
 .vscode/
@@ -26,7 +28,27 @@ ENV/
 *.swp
 *.swo
 
+# Logs
+logs/
+*.log
+
 # OS
 .DS_Store
 Thumbs.db
 .git-credentials
+
+# Cloud Shell / system files
+.bash_history
+.bash_logout
+.bashrc
+.profile
+.codeoss/
+.config/
+.docker/
+.local/
+.npm/
+.rustup/
+.sudo_as_admin_successful
+.lesshst
+.gitconfig
+README-cloudshell.txt

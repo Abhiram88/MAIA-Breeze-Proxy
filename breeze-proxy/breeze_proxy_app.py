@@ -1,3 +1,5 @@
+import eventlet
+eventlet.monkey_patch()
 import secrets
 import queue as _stdlib_queue
 from flask import Flask, request, jsonify
@@ -21,7 +23,7 @@ load_dotenv()
 
 # Load YAML config file (if present) as a fallback for secrets
 _yaml_config = {}
-_CONFIG_PATH = os.environ.get("CONFIG_PATH", "config.yaml")
+_CONFIG_PATH = os.environ.get("CONFIG_PATH", "env.yaml")
 if os.path.isfile(_CONFIG_PATH):
     try:
         with open(_CONFIG_PATH, "r") as f:
@@ -95,6 +97,13 @@ BREEZE_SYMBOL_OVERRIDES: dict[str, str] = {
 _tick_registry: dict[str, set] = {}   # symbol -> set(sid)
 _registry_symbol_map: dict[str, str] = {}   # canonical raw_symbol from Breeze -> frontend symbol
 _subscribed_breeze_codes: set[str] = set()  # breeze stock_codes with active subscriptions
+
+# Exchange-quote WebSocket ticks for individual stocks carry NO stock_code field.
+# Instead the tick has symbol="4.1!<token>" where token is the NSE instrument token.
+# This map is populated at subscription time using client.stock_script_dict_list[1]
+# (BreezeConnect's internal NSE equity token table: stock_code → token).
+# _dispatch_tick uses it to resolve "2885" → "RELIANCE".
+_token_to_std_map: dict[str, str] = {}   # NSE token string -> canonical frontend symbol
 
 # Thread-safe queue: Breeze's WebSocket reader thread puts raw ticks here;
 # the _run_tick_dispatcher greenlet drains the queue and calls socketio.emit.
@@ -194,10 +203,10 @@ def initialize_ai_clients():
         try:
             gemini_api_key = get_secret("GEMINI_API_KEY")
             if not gemini_api_key:
-                logger.error("GEMINI_API_KEY is missing!")
+                logger.error("GEMINI_API_KEY is missing! Add it to env.yaml or .env file.")
             else:
                 ai_client = genai.Client(api_key=gemini_api_key)
-                logger.info("Gemini AI client initialized.")
+                logger.info("Gemini AI client initialized (API key).")
         except Exception as e:
             logger.error(f"Gemini AI client initialization error: {e}")
 
@@ -305,7 +314,12 @@ def normalize_tick_for_frontend(ticks, resolved_symbol):
     `previous_close` per symbol, and use it to recompute `change` and `%` for all
     subsequent WebSocket ticks.
     """
-    last = to_float(ticks.get("last", ticks.get("ltp", ticks.get("last_traded_price", 0))))
+    # BreezeConnect field names differ by tick type:
+    #   Equity (exchange 4): last, change, close, bPrice/sPrice, ttq
+    #   Index  (exchange 3): last_trade_price, absolute_change, previous_close,
+    #                        bid_price/offer_price, total_traded_volume
+    #   REST get_quotes():   ltp, ltp_percent_change, close, best_bid_price, total_quantity_traded
+    last = to_float(ticks.get("last", ticks.get("ltp", ticks.get("last_traded_price", ticks.get("last_trade_price", 0)))))
 
     # REST get_quotes() always includes `ltp_percent_change`; WebSocket ticks never do.
     is_rest_quote = ticks.get("ltp_percent_change") is not None
@@ -331,12 +345,12 @@ def normalize_tick_for_frontend(ticks, resolved_symbol):
             # Fall back to the tick's own values — will be corrected on the next tick after
             # the REST snapshot completes and populates the cache.
             previous_close = to_float(ticks.get("close", ticks.get("previous_close", 0)))
-            change = to_float(ticks.get("change", (last - previous_close) if previous_close else 0))
-            raw_pct = ticks.get("chng_per")
+            change = to_float(ticks.get("change", ticks.get("absolute_change", (last - previous_close) if previous_close else 0)))
+            raw_pct = ticks.get("chng_per") or ticks.get("percentage_change")
             pct = (to_float(raw_pct) if (raw_pct is not None and raw_pct != "")
                    else ((change / previous_close * 100.0) if previous_close else 0.0))
 
-    vol = to_float(ticks.get("ttq", ticks.get("total_quantity_traded", ticks.get("total_volume", ticks.get("volume", 0)))))
+    vol = to_float(ticks.get("ttq", ticks.get("total_quantity_traded", ticks.get("total_traded_volume", ticks.get("total_volume", ticks.get("volume", 0))))))
 
     normalized = dict(ticks)
     normalized.update({
@@ -348,10 +362,10 @@ def normalize_tick_for_frontend(ticks, resolved_symbol):
         "change": change,
         "ltp_percent_change": pct,
         "percent_change": pct,
-        "best_bid_price": to_float(ticks.get("bPrice", ticks.get("best_bid_price", 0))),
-        "best_bid_quantity": to_float(ticks.get("bQty", ticks.get("best_bid_quantity", 0))),
-        "best_offer_price": to_float(ticks.get("sPrice", ticks.get("best_offer_price", 0))),
-        "best_offer_quantity": to_float(ticks.get("sQty", ticks.get("best_offer_quantity", 0))),
+        "best_bid_price": to_float(ticks.get("bPrice", ticks.get("best_bid_price", ticks.get("bid_price", 0)))),
+        "best_bid_quantity": to_float(ticks.get("bQty", ticks.get("best_bid_quantity", ticks.get("bid_quantity", 0)))),
+        "best_offer_price": to_float(ticks.get("sPrice", ticks.get("best_offer_price", ticks.get("offer_price", 0)))),
+        "best_offer_quantity": to_float(ticks.get("sQty", ticks.get("best_offer_quantity", ticks.get("offer_quantity", 0)))),
         "volume": vol,
         "total_quantity_traded": vol,
         "open": to_float(ticks.get("open", 0)),
@@ -374,7 +388,6 @@ def _global_on_ticks(ticks):
     from within the Flask-SocketIO event loop where socketio.emit() works correctly.
     """
     if ticks:
-        logger.debug(f"[on_ticks] Tick received: stock_code={ticks.get('stock_code')!r} last={ticks.get('last')!r}")
         _tick_dispatch_queue.put(dict(ticks))
 
 
@@ -384,18 +397,66 @@ def _dispatch_tick(ticks: dict) -> None:
     a watchlist_update event to all subscribed Socket.IO SIDs.
 
     Runs from the _run_tick_dispatcher greenlet — safe to call socketio.emit() here.
-    """
-    raw = ticks.get("stock_code") or ticks.get("stock_name") or ticks.get("symbol") or ""
-    # Breeze sometimes sends stock_code in token format: "4.1!NIFTY" or "1!NIFTY"
-    token_match = re.match(r"^\d+\.?\d*!(.+)$", str(raw))
-    if token_match:
-        raw = token_match.group(1)
 
-    resolved = _registry_symbol_map.get(canonical_symbol(raw)) or canonical_symbol(raw)
+    BreezeConnect tick formats (from parse_data in breeze_connect.py):
+      - NSE equity exchange-quote (exchange 4, data_type 1):
+          NO stock_code field. Has symbol="4.1!<token>", stock_name="<company>",
+          last=LTP, change, close (quirky prev-second), bPrice/sPrice, ttq, etc.
+      - Index exchange-quote (exchange 3):
+          stock_code="3.1!NIFTY 50", last_trade_price=LTP, previous_close,
+          absolute_change, percentage_change, total_traded_volume, etc.
+    Resolution order: token_map → registry → stock_name → canonical fallback.
+    """
+    raw = ticks.get("stock_code") or ""
+    if not raw:
+        # Exchange-quote ticks for NSE equity have NO stock_code.
+        # The tick carries symbol="4.1!<token>" — extract the token.
+        sym_field = str(ticks.get("symbol", ""))
+        token_match_sym = re.match(r"^\d+\.?\d*!(.+)$", sym_field)
+        if token_match_sym:
+            raw = token_match_sym.group(1)  # e.g. "2885"
+        else:
+            raw = ticks.get("stock_name", "")
+    else:
+        # stock_code may be a token string like "3.1!NIFTY 50" (index ticks)
+        token_match = re.match(r"^\d+\.?\d*!(.+)$", str(raw))
+        if token_match:
+            raw = token_match.group(1)
+
+    # Resolve the raw identifier to a canonical frontend symbol.
+    # 1. _token_to_std_map: numeric token → symbol (e.g. "2885" → "RELIANCE")
+    # 2. _registry_symbol_map: canonical form → symbol (e.g. "NIFTY" → "NIFTY")
+    # 3. Live reverse lookup via token_script_dict_list (token → [breeze_code, name])
+    # 4. stock_name fallback (e.g. "Nifty 50" → canonical "NIFTY")
+    stock_name = str(ticks.get("stock_name", ""))
+    resolved = (
+        _token_to_std_map.get(raw)
+        or _registry_symbol_map.get(canonical_symbol(raw))
+    )
+    # If first two paths failed, try live reverse lookup from BreezeConnect's internal dict.
+    # token_script_dict_list[1] maps token → [breeze_code, company_name] for NSE equities.
+    # This handles cases where get_stock_token_value() failed during setup but the tick
+    # still arrives with a valid token.
+    if not resolved and breeze_client:
+        try:
+            entry = breeze_client.token_script_dict_list[1].get(raw, [])
+            if entry:
+                breeze_code_from_token = str(entry[0])
+                resolved = _registry_symbol_map.get(canonical_symbol(breeze_code_from_token))
+                if resolved:
+                    # Cache for future ticks — avoid repeated dict lookups
+                    _token_to_std_map[raw] = resolved
+        except Exception:
+            pass
+    # Final fallbacks: stock_name or canonical raw
+    if not resolved:
+        resolved = (
+            _registry_symbol_map.get(canonical_symbol(stock_name))
+            or canonical_symbol(raw)
+        )
     payload = normalize_tick_for_frontend(ticks, resolved)
 
     targets = list(_tick_registry.get(resolved, set()))
-    logger.debug(f"[dispatch] symbol={resolved!r} ltp={payload.get('ltp')} targets={targets}")
 
     for sid in targets:
         try:
@@ -409,19 +470,25 @@ def _run_tick_dispatcher():
     Flask-SocketIO background task (eventlet greenlet) that drains _tick_dispatch_queue
     and calls _dispatch_tick for each tick.
 
-    Runs for the lifetime of the server. Uses socketio.sleep() to yield cooperatively
+    Runs for the lifetime of the server. Uses socketio.sleep(0) to yield cooperatively
     so other greenlets (HTTP handlers, Socket.IO heartbeats) can run between polls.
+    Zero-sleep yields the greenlet without introducing artificial latency — critical
+    for algo-trading where ticks must be dispatched within microseconds of arrival.
     """
     logger.info("[dispatcher] Tick dispatcher started.")
     while True:
         # Drain all pending ticks without blocking before yielding.
+        drained = False
         while True:
             try:
                 ticks = _tick_dispatch_queue.get_nowait()
                 _dispatch_tick(ticks)
+                drained = True
             except _stdlib_queue.Empty:
                 break
-        socketio.sleep(0.005)  # 5 ms cooperative yield — low latency with cooperative multitasking
+        # Zero-sleep: cooperative yield without artificial delay.
+        # When queue was empty, sleep 1ms to avoid busy-spinning.
+        socketio.sleep(0 if drained else 0.001)
 
 
 def _register_tick_sid(symbol: str, sid: str) -> None:
@@ -439,7 +506,7 @@ def get_gemini_model_candidates():
     Ordered fallback list for us-central1 and other regions.
     Try 2.5 first, then 2.0, then 1.5 so at least one model is available.
     """
-    raw = get_secret("GEMINI_MODELS") or os.environ.get("GEMINI_MODELS", "")
+    raw = os.environ.get("GEMINI_MODELS") or (_yaml_config.get("GEMINI_MODELS") if _yaml_config else "") or ""
     configured = [m.strip() for m in raw.split(",") if m and m.strip()]
     if configured:
         return configured
@@ -519,7 +586,11 @@ def root_health():
 @app.route("/api/breeze/health", methods=["GET"])
 @cross_origin()
 def health():
-    return jsonify({"status": "ok", "session_active": bool(DAILY_SESSION_TOKEN)})
+    return jsonify({
+        "status": "ok",
+        "session_active": bool(DAILY_SESSION_TOKEN),
+        "session_valid": bool(breeze_client and getattr(breeze_client, 'session_key', None))
+    })
 
 
 # ─────────────────────────────────────────────
@@ -571,18 +642,24 @@ def get_quotes():
         return err_resp, status_code
 
     data = request.get_json() or {}
+    raw_code = data.get("stock_code") or ""
+    # Apply same Breeze symbol mapping used in subscribe_feeds so AHLUCONT→AHLCON etc. work
+    stock_code = get_breeze_symbol(canonical_symbol(raw_code)) if raw_code else raw_code
+    exchange_code = data.get("exchange_code", "NSE")
     try:
         res = client.get_quotes(
-            stock_code=data.get("stock_code"),
-            exchange_code=data.get("exchange_code", "NSE"),
+            stock_code=stock_code,
+            exchange_code=exchange_code,
             product_type="cash"
         )
         normalized = normalize_breeze_response(res)
         if normalized:
             return jsonify(wrap_success_payload(normalized)), 200
-        return jsonify({"error": "Empty response from Breeze", "raw": str(res)}), 500
+        logger.error(f"[get_quotes] Empty response for {stock_code}: raw={res!r}")
+        return jsonify({"error": "Empty response from Breeze", "stock_code": stock_code, "raw": str(res)}), 500
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"[get_quotes] Exception for {stock_code}: {e}")
+        return jsonify({"error": str(e), "stock_code": stock_code}), 500
 
 
 @app.route("/api/breeze/depth", methods=["POST"])
@@ -1193,25 +1270,31 @@ def parse_attachment():
             return jsonify({"error": "Missing or invalid url"}), 400
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept': 'text/html,application/xhtml+xml,application/xml,application/pdf,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
         }
         if 'nseindia.com' in url or 'nsearchives.nseindia.com' in url:
             headers['Referer'] = 'https://www.nseindia.com/'
-        import time
-        last_err = None
-        for attempt in range(2):
+        r = req.get(url, headers=headers, timeout=20)
+        r.raise_for_status()
+        ct = r.headers.get('Content-Type', '').lower()
+        is_pdf = 'pdf' in ct or url.lower().split('?')[0].endswith('.pdf')
+        if is_pdf:
+            # Extract text from PDF using pypdf
             try:
-                r = req.get(url, headers=headers, timeout=35)
-                r.raise_for_status()
-                html = r.text
-                break
-            except Exception as e:
-                last_err = e
-                if attempt == 0:
-                    time.sleep(2)
-        else:
-            raise last_err
+                import io
+                from pypdf import PdfReader
+                reader = PdfReader(io.BytesIO(r.content))
+                pages_text = []
+                for page in reader.pages[:30]:  # cap at 30 pages
+                    pages_text.append(page.extract_text() or '')
+                text = '\n'.join(pages_text)
+                text = re.sub(r'\s+', ' ', text).strip()
+                return jsonify({"text": text[:100000] if text else ""})
+            except Exception as pdf_err:
+                logger.warning(f"PDF extraction failed for {url}: {pdf_err}")
+                return jsonify({"text": "", "error": f"PDF extraction failed: {pdf_err}"})
+        html = r.text
         # Strip tags and collapse whitespace for text extraction
         text = re.sub(r'<script[^>]*>[\s\S]*?</script>', ' ', html, flags=re.IGNORECASE)
         text = re.sub(r'<style[^>]*>[\s\S]*?</style>', ' ', text, flags=re.IGNORECASE)
@@ -1243,121 +1326,464 @@ def nse_announcements():
     if request.method == 'OPTIONS':
         return jsonify(success=True)
     try:
-        import requests as req_lib
+        import requests
         from datetime import datetime, timedelta
 
         payload = request.get_json(silent=True) or {}
         from_date_str = payload.get('from_date', '')
 
-        # Parse from_date (expects YYYY-MM-DD); cap range at 90 days to avoid huge results
+        # Parse from_date (YYYY-MM-DD); default 7 days back; cap at 90 days
         try:
             from_dt = datetime.strptime(from_date_str, '%Y-%m-%d')
         except (ValueError, TypeError):
             from_dt = datetime.utcnow() - timedelta(days=7)
         to_dt = datetime.utcnow()
-        max_from = to_dt - timedelta(days=90)
-        if from_dt < max_from:
-            from_dt = max_from
+        if from_dt < to_dt - timedelta(days=90):
+            from_dt = to_dt - timedelta(days=90)
 
-        # NSE API uses DD-MM-YYYY
-        from_nse = from_dt.strftime('%d-%m-%Y')
-        to_nse = to_dt.strftime('%d-%m-%Y')
+        from_str = from_dt.strftime('%Y-%m-%d')
+        to_str   = to_dt.strftime('%Y-%m-%d')
 
-        base_headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://www.nseindia.com/',
-        }
+        api_url = 'https://stockinsights-ai-main-95a26a0.zuplo.app/api/in/v0/documents/announcement'
+        api_key = get_secret('STOCKINSIGHTS_API_KEY')
+        if not api_key:
+            logger.error('STOCKINSIGHTS_API_KEY not configured')
+            return jsonify({'error': 'StockInsights API key not configured', 'announcements': []}), 500
 
-        sess = req_lib.Session()
-        sess.headers.update(base_headers)
+        req_headers = {'Authorization': f'Bearer {api_key}'}
+        PAGE_LIMIT  = 20
+        all_items   = []
+        page        = 1
 
-        # Warm up session cookies by visiting NSE homepage
-        try:
-            sess.get('https://www.nseindia.com', timeout=10)
-        except Exception as warm_err:
-            logger.warning(f'NSE session warmup failed: {warm_err}')
+        while True:
+            params = {
+                'announcement_type_id': '8',
+                'from_date': from_str,
+                'to_date':   to_str,
+                'page':      page,
+                'limit':     PAGE_LIMIT,
+            }
+            logger.info(f'StockInsights page {page}: {from_str} → {to_str}')
+            resp = requests.get(api_url, headers=req_headers, params=params, timeout=20)
+            if resp.status_code != 200:
+                logger.error(f'StockInsights HTTP {resp.status_code}: {resp.text[:200]}')
+                break
+            data    = resp.json()
+            records = data.get('data', [])
+            total   = data.get('meta', {}).get('total_count', 0)
+            all_items.extend(records)
+            if not records or len(all_items) >= total:
+                break
+            page += 1
 
-        # Fetch corporate announcements from NSE API
-        api_url = (
-            f'https://www.nseindia.com/api/corporate-announcements'
-            f'?index=equities&from_date={from_nse}&to_date={to_nse}'
-        )
-        resp = sess.get(api_url, timeout=30)
-        resp.raise_for_status()
-
-        items = resp.json()
-        if not isinstance(items, list):
-            items = items.get('data', []) if isinstance(items, dict) else []
-
-        # Keywords that indicate an order/contract announcement
-        ORDER_KEYWORDS = {
-            'order', 'contract', 'bagged', 'awarded', 'award', 'secured',
-            'win', 'won', 'new business', 'agreement', 'mou', 'loa',
-            'letter of award', 'purchase order', 'work order', 'project',
-        }
-
-        def _is_order_event(subject: str) -> bool:
-            s_lower = subject.lower()
-            return any(kw in s_lower for kw in ORDER_KEYWORDS)
-
-        def _parse_date(raw: str) -> str:
-            """Convert NSE date formats to YYYY-MM-DD."""
-            raw = (raw or '').strip()
-            for fmt in ('%d-%b-%Y', '%d-%b-%y', '%d/%m/%Y', '%d-%m-%Y'):
-                try:
-                    return datetime.strptime(raw, fmt).strftime('%Y-%m-%d')
-                except (ValueError, TypeError):
-                    pass
-            # ISO format: "2024-06-24T14:30:00+05:30" -> "2024-06-24"
-            if len(raw) >= 10 and raw[4:5] == '-' and raw[7:8] == '-':
-                return raw[:10]
-            return from_dt.strftime('%Y-%m-%d')
+        logger.info(f'StockInsights: {len(all_items)} total records fetched')
 
         announcements = []
-        for item in items:
-            subject = str(item.get('subject', '') or item.get('desc', ''))
-            if not _is_order_event(subject):
-                continue  # skip non-order events to avoid flooding the AI pipeline
-
-            company_name = str(item.get('sm_name', '') or item.get('company', '')).strip()
-            symbol = str(item.get('symbol', '') or '').strip()
-            an_dt = str(item.get('sort_date', '') or item.get('an_dt', ''))
-            attachment = str(item.get('attchmntFile', '') or '').strip()
-
-            if not company_name or not symbol:
+        skipped       = 0
+        for rec in all_items:
+            nse_ticker = next(
+                (t.get('ticker', '') for t in rec.get('exchange_tickers', [])
+                 if isinstance(t, dict) and t.get('exchange') == 'NSE'),
+                ''
+            )
+            if not nse_ticker:
+                skipped += 1
                 continue
+            ai       = rec.get('ai_insights') or {}
+            summary  = ai.get('summary_text') or ai.get('summary_header') or ''
+            kp       = ai.get('key_points') or ai.get('highlights') or []
+            if kp and isinstance(kp, list):
+                bullets = ' '.join(f'• {p}' for p in kp if p)
+                if bullets:
+                    summary = f"{summary} {bullets}".strip()
 
-            pub_date = _parse_date(an_dt)
-
-            if attachment:
-                if attachment.endswith('.xml'):
-                    source_link = f'https://nsearchives.nseindia.com/corporate/xbrl/{attachment}'
-                else:
-                    source_link = f'https://nsearchives.nseindia.com/corporate/ixbrl/{attachment}'
-            else:
-                source_link = ''
+            # Also try to get document text from document_text field if available
+            doc_text = rec.get('document_text') or rec.get('attachment_text') or ''
+            full_text = doc_text if len(doc_text) > len(summary) else summary
 
             announcements.append({
-                'company_name': company_name,
-                'nse_ticker': symbol,
-                'published_date': pub_date,
-                'source_link': source_link,
+                'company_name':    rec.get('company_name', ''),
+                'nse_ticker':      nse_ticker,
+                'published_date':  rec.get('published_date') or '',
+                'source_link':     rec.get('source_link', ''),
+                'attachment_text': full_text,
+                'summary_text':    summary,
             })
 
-        logger.info(f'NSE announcements: {len(announcements)} order events ({from_nse} → {to_nse})')
+        logger.info(f'NSE announcements: {len(announcements)} NSE records, {skipped} BSE-only skipped')
         return jsonify({'announcements': announcements})
 
     except Exception as e:
-        logger.warning(f'NSE announcements endpoint error: {e}')
+        logger.exception(f'NSE announcements endpoint error: {e}')
         return jsonify({'error': str(e), 'announcements': []}), 500
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REG30 HELPERS — ported from Bulk_reg30_processor.py
+# ─────────────────────────────────────────────────────────────────────────────
+
+_STAGE_ORDER = {"L1": 1, "LOA": 2, "WO": 3, "NTP": 4}
+
+def _to_float(v, default=0.0):
+    try:
+        if v is None or v == "": return float(default)
+        return float(str(v).replace(",", "").strip())
+    except Exception:
+        return float(default)
+
+def _norm_date(raw):
+    if not raw:
+        return datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    for fmt in (None, "%d-%b-%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+        try:
+            if fmt is None:
+                return datetime.datetime.fromisoformat(
+                    raw.strip().replace("Z", "+00:00")).strftime("%Y-%m-%d")
+            return datetime.datetime.strptime(raw.strip().split("T")[0], fmt).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+    return raw.strip()[:10]
+
+def _norm_datetime(raw):
+    if not raw:
+        return datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    try:
+        return datetime.datetime.fromisoformat(
+            raw.strip().replace("Z", "+00:00")).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    except Exception:
+        return _norm_date(raw) + "T00:00:00+00:00"
+
+def _infer_months(text):
+    if not text: return None
+    t = text.lower().strip()
+    if any(w in t for w in ("immediately", "spot", "forthwith", "on delivery", "working days", "within days")):
+        return 1
+    if "financial year" in t or "next year" in t: return 12
+    word_nums = [
+        ("one and a half", 18), ("one and half", 18), ("one-and-a-half", 18),
+        ("twenty four", 24), ("twenty-four", 24), ("thirty six", 36), ("thirty-six", 36),
+        ("eighteen", 18), ("fifteen", 15), ("sixteen", 16), ("seventeen", 17),
+        ("nineteen", 19), ("fourteen", 14), ("thirteen", 13), ("twelve", 12),
+        ("eleven", 11), ("twenty", 20), ("ten", 10), ("nine", 9), ("eight", 8),
+        ("seven", 7), ("six", 6), ("five", 5), ("four", 4), ("three", 3), ("two", 2), ("one", 1),
+    ]
+    for word, num in word_nums:
+        if word in t:
+            if "year" in t:  return num * 12
+            if "month" in t: return num
+            if "week" in t:  return max(1, round(num / 4.3))
+            if "day" in t:   return max(1, round(num / 30.4))
+    m = re.search(r"(\d+(?:\.\d+)?)\s*[-–]?\s*\d*\s*(months?|years?|weeks?|days?)", t, re.IGNORECASE)
+    if m:
+        val, unit = float(m.group(1)), m.group(2).lower()
+        if "year"  in unit: return int(val * 12)
+        if "month" in unit: return max(1, int(val))
+        if "week"  in unit: return max(1, round(val / 4.3))
+        if "day"   in unit: return max(1, round(val / 30.4))
+    return None
+
+def _classify_family(text, stage):
+    t = (text or "").lower()
+    if re.search(r"arbitrat|certif|settlement|termination|\bagm\b|\begm\b|board meeting|"
+                 r"green building|empanell|empanel|network provider|enrollment", t):
+        return "OTHER"
+    if re.search(
+        r"awarding|bagging|work order|letter of award|\bloa\b|l1 bidder|"
+        r"lowest bidder|notice to proceed|\bntp\b|purchase order|\bpo\b|"
+        r"contract.*award|rate contract|framework agreement|received.*order|"
+        r"secured.*contract|won.*contract|awarded.*contract|bagged.*order", t
+    ):
+        return "ORDER_CONTRACT"
+    if re.search(r"issuance|allotment|equity|rights issue|fundrais", t):
+        return "DILUTION_CAPITAL"
+    if re.search(r"dividend|buyback|bonus|stock split", t):
+        return "SHAREHOLDER_RETURNS"
+    if re.search(r"\brating\b|\bcrisil\b|\bicra\b|\bcare\b|\bfitch\b|\bmoody\b", t):
+        return "CREDIT_RATING"
+    if re.search(r"litigation|fine|court|penalty|arbitration|sebi notice", t):
+        return "LITIGATION_REGULATORY"
+    if stage and stage in _STAGE_ORDER:
+        return "ORDER_CONTRACT"
+    return "OTHER"
+
+def _validate_extraction(ext, summary, family):
+    issues = []
+    e = dict(ext)
+    # execution_months
+    em = e.get("execution_months")
+    if em is not None:
+        try:
+            em = int(float(str(em)))
+            e["execution_months"] = em if 0 < em <= 600 else None
+            if e["execution_months"] is None:
+                issues.append(f"execution_months={em} out of range — cleared")
+        except Exception:
+            issues.append(f"execution_months={em!r} not numeric — cleared")
+            e["execution_months"] = None
+    if e.get("execution_months") is None and e.get("execution_period_text"):
+        inferred = _infer_months(e["execution_period_text"])
+        if inferred:
+            e["execution_months"] = inferred
+    if e.get("execution_months") is None and e.get("end_date"):
+        try:
+            datetime.datetime.strptime(str(e["end_date"])[:10], "%Y-%m-%d")
+            e["_end_date_pending_resolution"] = e["end_date"]
+            issues.append(f"execution_months pending — end_date={e['end_date']}")
+        except Exception:
+            pass
+    # order_value_cr
+    ov = e.get("order_value_cr")
+    if ov is not None:
+        ov_f = _to_float(ov)
+        if ov_f <= 0:
+            issues.append("order_value_cr <= 0 — cleared"); e["order_value_cr"] = None
+        elif ov_f > 500_000:
+            issues.append(f"order_value_cr={ov_f} suspiciously large — flagged")
+        else:
+            e["order_value_cr"] = ov_f
+    if not e.get("order_value_cr") and family in ("ORDER_CONTRACT", "ORDER_PIPELINE"):
+        # Try "Rs. 500 Crore" style
+        m = re.search(r'(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d+)?)\s*(?:Cr(?:ore)?s?)', summary, re.IGNORECASE)
+        if m:
+            val = _to_float(m.group(1))
+            if 0 < val < 500_000:
+                e["order_value_cr"] = val
+        # Try raw rupee amount "Rs. 1,92,98,500/-" → convert to Crores
+        if not e.get("order_value_cr"):
+            m2 = re.search(r'(?:Rs\.?|INR|₹)\s*([\d,]+(?:\.\d+)?)\s*/[-–]?', summary, re.IGNORECASE)
+            if m2:
+                raw_val = _to_float(m2.group(1))
+                if raw_val > 10_00_000:  # only if it looks like rupees (> 10 lakh)
+                    val_cr = raw_val / 1_00_00_000
+                    if 0 < val_cr < 500_000:
+                        e["order_value_cr"] = round(val_cr, 4)
+                        e["_order_value_from_rupees"] = True
+    # order_type
+    ot = (e.get("order_type") or "").upper()
+    valid_types = {"CONSTRUCTION", "SUPPLY", "SERVICES", "SUB-CONTRACT", "MIXED"}
+    if ot not in valid_types:
+        s = summary.lower()
+        if any(w in s for w in ["civil","road","bridge","epc","construction","electrification","infrastructure","tunnel"]):
+            e["order_type"] = "CONSTRUCTION"
+        elif any(w in s for w in ["supply","equipment","material","transformer","hardware","manufacturing","solar module"]):
+            e["order_type"] = "SUPPLY"
+        elif any(w in s for w in ["software","it ","surveillance","maintenance","o&m","consulting","services","analytics","outsourcing"]):
+            e["order_type"] = "SERVICES"
+        else:
+            e["order_type"] = "UNKNOWN"
+    # stage
+    stage = e.get("stage")
+    if stage not in (None, "L1", "LOA", "WO", "NTP", "MOU", "OTHER"):
+        issues.append(f"stage='{stage}' invalid — cleared"); e["stage"] = None
+    # critical missing
+    if family in ("ORDER_CONTRACT", "ORDER_PIPELINE"):
+        if not e.get("order_value_cr"): issues.append("order_value_cr missing on ORDER event")
+        if not e.get("stage"):          issues.append("stage missing on ORDER event")
+        if not e.get("execution_months"): issues.append("execution_months could not be determined")
+    if issues: e["_validation_issues"] = issues
+    return e, issues
+
+def _calculate_score(family, ext, confidence):
+    impact = 0; direction = "NEUTRAL"; factors = []; conversion_bonus = 0; exec_months = None
+    order_type = (ext.get("order_type") or "UNKNOWN").upper()
+    def add(pts, msg):
+        nonlocal impact
+        impact += pts
+        factors.append(f"{'+' if pts >= 0 else ''}{pts}: {msg}")
+    if family in ("ORDER_CONTRACT", "ORDER_PIPELINE"):
+        direction = "POSITIVE"
+        add(20 if family == "ORDER_CONTRACT" else 15, f"Base weight for {family.replace('_',' ')}")
+        order_cr = _to_float(ext.get("order_value_cr"))
+        market_cap = _to_float(ext.get("market_cap_cr"))
+        if order_cr > 0:
+            if market_cap > 0:
+                ratio = order_cr / market_cap
+                bonus = 25 if ratio >= 0.15 else 18 if ratio >= 0.08 else 12 if ratio >= 0.03 else 6 if ratio >= 0.01 else 2
+                add(bonus, f"Order/mktcap {ratio*100:.2f}% (Rs.{order_cr}Cr / Rs.{market_cap}Cr)")
+            else:
+                bonus = 30 if order_cr >= 1000 else 20 if order_cr >= 500 else 10 if order_cr >= 100 else 5
+                add(bonus, f"Absolute value bonus (Rs.{order_cr}Cr)")
+        else:
+            add(-10, "Order value missing")
+        stage = ext.get("stage") or ""
+        stage_bonus = {"LOA": 20, "WO": 20, "NTP": 18, "L1": 12}.get(stage, 5)
+        add(stage_bonus, f"Stage: {stage or 'General'}")
+        contract_mode = (ext.get("contract_mode") or "").upper()
+        if contract_mode == "HAM":
+            exec_months = ext.get("construction_period_months") or ext.get("execution_months")
+        if exec_months is None:
+            exec_months = ext.get("execution_months")
+        if exec_months is None and ext.get("execution_years"):
+            exec_months = int(_to_float(ext["execution_years"]) * 12)
+        if exec_months:
+            exec_months = int(exec_months)
+            conversion_bonus = 10 if exec_months <= 6 else 6 if exec_months <= 12 else 2 if exec_months <= 24 else 0
+            if order_type == "SUPPLY":    conversion_bonus += 2
+            elif order_type == "SERVICES": conversion_bonus += 1
+            conversion_bonus = min(conversion_bonus, 10)
+            if conversion_bonus > 0:
+                add(conversion_bonus, f"Conversion bonus (~{exec_months}m, {order_type})")
+        if ext.get("is_subsidiary_win"):
+            add(-8, f"Subsidiary win ({ext.get('subsidiary_name','WOS')})")
+    elif family == "CREDIT_RATING":
+        action = (ext.get("rating_action") or "").lower()
+        if "upgrade" in action:
+            direction = "POSITIVE";  add(40, f"Rating upgrade: {action}")
+        elif "downgrade" in action:
+            direction = "NEGATIVE";  add(50, f"Rating downgrade: {action}")
+        else:
+            add(10, f"Rating action: {action or 'review'}")
+    elif family == "LITIGATION_REGULATORY":
+        direction = "NEGATIVE"; add(40, "Litigation / regulatory risk")
+    else:
+        add(10, f"Standard event: {family}")
+    impact = min(max(impact, 0), 100)
+    has_issues = bool(ext.get("_validation_issues"))
+    if (has_issues and confidence < 0.7) or confidence < 0.65:
+        rec = "NEEDS_MANUAL_REVIEW"
+    elif impact >= 75:
+        rec = "ACTIONABLE_BULLISH" if direction == "POSITIVE" else "ACTIONABLE_BEARISH_RISK"
+    elif impact >= 55:
+        rec = "HIGH_PRIORITY_WATCH"
+    else:
+        rec = "TRACK"
+    return {"impact_score": impact, "direction": direction, "action_recommendation": rec,
+            "scoring_factors": factors, "conversion_bonus": conversion_bonus,
+            "execution_months": exec_months, "order_type": order_type}
+
+
+_FUNDAMENTALS_PROMPT = """What was the approximate market capitalization of {company_name} (NSE: {symbol}) in {year_month}?
+
+Also provide PAT (profit after tax) and Networth for the nearest quarter to {year_month}.
+
+Return ONLY this JSON:
+{{
+  "market_cap_cr": <number in Crores or null>,
+  "pat_cr": <number in Crores or null>,
+  "networth_cr": <number in Crores or null>,
+  "data_as_of": "<quarter string>"
+}}"""
+
+def _enrich_fundamentals(ai_client, model_name, symbol, company_name, event_date):
+    """Fetch market_cap_cr, pat_cr, networth_cr via Gemini Google Search grounding.
+    Ported from Bulk_reg30_processor.py gemini_enrich_fundamentals().
+    Only called for ORDER events with impact_score >= 20."""
+    try:
+        try:
+            year_month = datetime.datetime.strptime(event_date, "%Y-%m-%d").strftime("%B %Y")
+        except Exception:
+            year_month = event_date
+        prompt = _FUNDAMENTALS_PROMPT.format(
+            company_name=company_name, symbol=symbol, year_month=year_month
+        )
+        with eventlet.Timeout(15, False):
+            response = ai_client.models.generate_content(
+                model=model_name,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                    temperature=0.1,
+                ),
+            )
+            raw = re.sub(r'^```(?:json)?\s*', '', response.text.strip())
+            raw = re.sub(r'\s*```$', '', raw)
+            result = json.loads(raw)
+            mkt = _to_float(result.get("market_cap_cr"))
+            if mkt > 0:
+                logger.info(f"[Reg30] Fundamentals {symbol}: mktcap=Rs.{mkt}Cr as_of={result.get('data_as_of','?')}")
+            return result
+        logger.warning(f"[Reg30] Fundamentals timeout for {symbol} — skipping")
+        return {}
+    except Exception as e:
+        logger.warning(f"[Reg30] Fundamentals enrichment failed for {symbol}: {e}")
+        return {}
+
+
+# Semantic system instruction — from Bulk_reg30_processor.py
+_EXTRACTION_SYSTEM = """You are an expert Indian equity analyst reading NSE Regulation 30 corporate announcements.
+
+Your job is to extract structured data from the attached document or announcement summary. Use your full reasoning ability — do not just pattern-match to examples.
+
+WHAT TO EXTRACT:
+- Company identity: NSE symbol, company name
+- Contract basics: who awarded it, domestic or international, nature of work
+- Contract value: the total consideration/size in Indian Crores (convert if needed: 1 Crore = 10 million INR = 100 Lakhs; USD 1M ≈ 8.4 Cr)
+- Contract stage: L1 (lowest bidder, not yet awarded) | LOA (Letter of Award received) | WO (Work Order / Purchase Order / Contract signed / awarded / secured / bagged) | NTP (Notice to Proceed) | MOU | OTHER
+- Duration: how long the contract runs — convert to integer months
+  (Two Years = 24, 18 months = 18, 90 days = 3, immediately = 1)
+  For HAM/BOT infrastructure contracts, use only the construction period, not the O&M period
+- Order type: CONSTRUCTION | SUPPLY | SERVICES | SUB-CONTRACT
+  Infer from what is being done — civil/road/power/EPC = CONSTRUCTION, goods/equipment = SUPPLY,
+  IT/O&M/surveillance/consulting = SERVICES, work for a main contractor = SUB-CONTRACT
+- Whether the order was won by a subsidiary (not the listed parent company itself)
+- Whether the announcement covers multiple separate orders
+
+RULES:
+1. Never fabricate numbers. If something is genuinely absent, return null.
+2. For contract value, prefer the "Broad consideration" or "size of contract" field if present.
+   Otherwise extract from any clear statement in the text (e.g. "valued at Rs. 500 crore").
+3. CRITICAL — XBRL structured forms often have a secondary table where field values show "NA" or "N/A".
+   This is a form default, NOT the actual value. ALWAYS read the full cover letter, letter body,
+   and annexures first. The cover letter takes precedence over any structured XBRL table entry.
+   If the cover letter says "Rs. 1,92,98,500/-" but the XBRL table says "NA", use the cover letter value.
+4. When values are in raw Rupees (e.g. "Rs. 1,92,98,500/-"), convert to Crores by dividing by 1,00,00,000.
+5. Return STRICT JSON only — no markdown, no explanation outside the JSON.
+6. Confidence: your honest 0.0–1.0 estimate of extraction quality.
+   Use < 0.7 if the document is unclear, scanned poorly, or key fields are missing.
+"""
+
+_EXTRACTION_PROMPT = """Read this NSE Reg30 announcement and extract all fields.
+
+Company (from dataset): {company_name}
+NSE Ticker (from dataset): {nse_ticker}
+Filing Date: {published_date}
+
+IMPORTANT: If both a cover letter and an Annexure are present, extract the order
+value from the cover letter first. The cover letter states the PRIMARY order value.
+The Annexure provides supporting details.
+
+Return this exact JSON structure:
+{{
+  "summary": "2-3 sentences describing what happened in plain English",
+  "direction_hint": "POSITIVE",
+  "confidence": 0.85,
+  "missing_fields": [],
+  "evidence_spans": ["short direct quotes (max 120 chars each) supporting key extractions"],
+  "extracted": {{
+    "nse_symbol": "NSE ticker symbol",
+    "company_name": "Full legal company name",
+    "customer": "Name of the entity that awarded the contract",
+    "international": false,
+    "order_value_cr": 500.0,
+    "original_currency": null,
+    "original_value": null,
+    "stage": "WO",
+    "execution_months": 18,
+    "execution_period_text": "exact duration phrase from document",
+    "construction_period_months": null,
+    "contract_mode": "EPC",
+    "order_type": "CONSTRUCTION",
+    "is_subsidiary_win": false,
+    "subsidiary_name": null,
+    "multiple_orders": false,
+    "new_customer": null,
+    "conditionality": "LOW",
+    "prior_stage": null,
+    "rating_action": null,
+    "market_cap_cr": null,
+    "networth_cr": null
+  }}
+}}"""
 
 
 @app.route('/api/gemini/reg30-analyze', methods=['POST', 'OPTIONS'])
 @cross_origin()
 def reg30_analyze():
-    """Run Reg30 event analysis with Gemini. Extraction only; impact scoring is done in frontend."""
+    """
+    Reg30 analysis endpoint — ported from Bulk_reg30_processor.py.
+    Fetches PDF bytes directly, sends to Gemini multimodal, validates extraction,
+    runs scoring server-side. Returns complete payload ready for Supabase upsert.
+    """
     if request.method == 'OPTIONS':
         return jsonify(success=True)
     initialize_ai_clients()
@@ -1366,89 +1792,190 @@ def reg30_analyze():
     try:
         data = request.get_json(silent=True) or {}
         candidate = data.get('candidate') or {}
-        # Keep full text for regex fallback; truncate a copy for Gemini's context window.
-        # full_attachment_text is bounded by the frontend's parse endpoint which caps at 100k chars.
-        full_attachment_text = (data.get('attachment_text') or '').strip()
-        attachment_text = full_attachment_text[:30000]
-        if len(attachment_text) < 100:
-            return jsonify({
-                "error": "Document text empty or too short. The link could not be fetched or the page has no extractable content. Check the URL or try again later."
-            }), 400
-        company_name = candidate.get('company_name') or 'Unknown'
-        symbol = candidate.get('symbol') or ''
-        source = candidate.get('source') or 'XBRL'
-        raw_text = candidate.get('raw_text') or ''
-        prompt = (
-            "Perform a forensic extraction on this NSE disclosure:\n"
-            f"Company: {company_name}\n"
-            f"Symbol: {symbol}\n"
-            f"Source: {source}\n"
-            f"Context: {raw_text}\n\n"
-            f"Document Text: {attachment_text}\n\n"
-            "Return STRICT JSON only with these keys: summary (string), direction_hint (one of: POSITIVE, NEGATIVE, NEUTRAL), "
-            "confidence (number 0-1), missing_fields (array of strings), evidence_spans (array of strings, max 160 chars each), "
-            "extracted (object with: symbol, company_name, order_value_cr, stage, execution_months, execution_years, end_date, "
-            "order_type, customer, international, new_customer, conditionality, rating_action, notches, outlook_change, "
-            "amount_cr, stage_legal, ops_impact; and when present in document: nse_symbol, market_cap_cr)."
+
+        company_name   = (candidate.get('company_name') or 'Unknown').strip()
+        symbol         = (candidate.get('symbol') or '').strip()
+        published_date = (candidate.get('event_date') or candidate.get('published_date') or '').strip()
+        event_date     = _norm_date(published_date)
+        event_datetime = _norm_datetime(published_date)
+
+        source_link = (candidate.get('source_link') or candidate.get('attachment_url') or '').strip()
+        summary_text = (candidate.get('raw_text') or candidate.get('summary_text') or '').strip()
+        fallback_text = (
+            (candidate.get('attachment_text') or '').strip() or summary_text
         )
-        sys_instr = (
-            "You are an expert Indian equity events analyst focused on NSE Regulation 30–style disclosures and order-pipeline events. "
-            "You ONLY summarize and extract structured data from provided text. You do NOT browse the web.\n\n"
-            "HARD RULES:\n"
-            "1) NEVER fabricate numbers or facts. If not present, output null and add the field name to missing_fields.\n"
-            "2) Use only provided raw_text/attachment_text. No external sources.\n"
-            "3) Provide evidence_spans (<=160 chars each) for key extractions/classifications.\n"
-            "4) CURRENCY: Convert raw INR to Crore (CR). 1 CR = 10,000,000 INR.\n"
-            "5) STAGE: Must be one of: \"L1\" | \"LOA\" | \"WO\" | \"NTP\" | \"MOU\" | \"OTHER\".\n"
-            "6) Output MUST be STRICT JSON only.\n"
-            "7) MANDATORY: Read the very beginning of the document. Look for a 'General Information' section with 'NSE Symbol*' and 'Name of the Company*' (or similar). Set extracted.nse_symbol to the symbol value (e.g. MCLOUD, AHUCON) and extracted.company_name to the full company name. Always prefer these document values over any context.\n"
-            "8) If the document mentions market cap or market capitalization (in Cr or Rs), extract as market_cap_cr (number in Crore).\n"
-            "9) For order_value_cr use ONLY 'Broad commercial consideration' or 'size of the order(s)/contract(s)' (convert to Crore). Do NOT use 'Value of the order(s)/contract(s)' — it often has data entry errors (extra zeros)."
+
+        # ── Fetch raw PDF bytes from source_link ──────────────────────────────
+        # Gemini is multimodal — send the PDF directly, do NOT parse/extract text
+        # in Python. Let Gemini read the document natively.
+        pdf_bytes = None
+        if source_link and source_link.startswith('http'):
+            try:
+                import requests as req
+                from urllib.parse import urlparse
+                parsed_url = urlparse(source_link)
+                hostname = (parsed_url.hostname or '').lower()
+                # SSRF protection: block internal/private targets
+                if parsed_url.scheme not in ('http', 'https') or not hostname:
+                    logger.warning(f"[Reg30] Invalid source_link: {source_link[:80]}")
+                elif hostname in ('localhost', '127.0.0.1', '0.0.0.0', '::1', 'metadata.google.internal'):
+                    logger.warning(f"[Reg30] Blocked internal source_link: {source_link[:80]}")
+                else:
+                    fetch_headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                        'Accept': 'application/pdf,text/html,*/*;q=0.8',
+                    }
+                    if hostname in ('nseindia.com', 'www.nseindia.com', 'nsearchives.nseindia.com'):
+                        fetch_headers['Referer'] = 'https://www.nseindia.com/'
+                    r = req.get(source_link, headers=fetch_headers, timeout=25)
+                    r.raise_for_status()
+                    ct = r.headers.get('Content-Type', '').lower()
+                    if 'pdf' in ct or source_link.lower().split('?')[0].endswith('.pdf'):
+                        pdf_bytes = r.content
+                        logger.info(f"[Reg30] Fetched PDF: {len(pdf_bytes)} bytes from {source_link[:80]}")
+                    else:
+                        logger.info(f"[Reg30] source_link is not PDF (ct={ct}), will use text fallback")
+            except Exception as e:
+                logger.warning(f"[Reg30] PDF fetch failed for {source_link[:80]}: {e}")
+
+        logger.info(f"[Reg30] Analyzing {symbol} | pdf={'yes' if pdf_bytes else 'no'} text={len(fallback_text)}c")
+
+        # ── Build Gemini content ───────────────────────────────────────────────
+        prompt_text = _EXTRACTION_PROMPT.format(
+            company_name=company_name,
+            nse_ticker=symbol or company_name,
+            published_date=event_date,
         )
+        attachment_text = (candidate.get('attachment_text') or '').strip()
+
+        if attachment_text and len(attachment_text) > 300:
+            # StockInsights pre-extracted clean text — more reliable than raw PDF bytes
+            # for scanned/encoded PDFs. Use this as primary input.
+            content_parts = [
+                types.Part(text=f"Announcement text:\n{attachment_text}\n\n{prompt_text}")
+            ]
+            logger.info(f"[Reg30] Using attachment_text ({len(attachment_text)}c) for {symbol}")
+        elif pdf_bytes:
+            # No clean pre-extracted text — send raw PDF bytes to Gemini
+            content_parts = [
+                types.Part(inline_data=types.Blob(data=pdf_bytes, mime_type="application/pdf")),
+                types.Part(text=prompt_text),
+            ]
+            logger.info(f"[Reg30] Using PDF bytes ({len(pdf_bytes)}b) for {symbol}")
+        elif fallback_text and len(fallback_text) > 20:
+            # Last resort: short summary text only
+            content_parts = [types.Part(text=f"Announcement text:\n{fallback_text}\n\n{prompt_text}")]
+            logger.warning(f"[Reg30] Using fallback summary text for {symbol} — quality may be low")
+        else:
+            return jsonify({"error": "No usable content — no attachment_text, PDF, or summary"}), 400
+
+        # ── Gemini extraction ──────────────────────────────────────────────────
+        result = None
         for model_name in get_gemini_model_candidates():
             try:
                 response = ai_client.models.generate_content(
                     model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(system_instruction=sys_instr),
+                    contents=content_parts,
+                    config=types.GenerateContentConfig(
+                        system_instruction=_EXTRACTION_SYSTEM,
+                        temperature=0.1,
+                    ),
                 )
                 result = extract_json(response.text)
-                if not result or not isinstance(result.get('summary'), str):
-                    continue
-                # Normalize: promote symbol/company from extracted to top level so frontend always has them
-                extracted = result.get('extracted') or {}
-                if not isinstance(extracted, dict):
-                    extracted = {}
-                result['symbol'] = extracted.get('nse_symbol') or extracted.get('symbol') or result.get('symbol') or symbol or ''
-                result['company_name'] = extracted.get('company_name') or result.get('company_name') or company_name or 'Unknown'
-                # Fallback: parse from document text if Gemini missed General Information (table format: | NSE Symbol* | VALUE |)
-                # Use full_attachment_text (up to 100k) so the search is not limited to the 30k Gemini window.
-                if (not result['symbol'] or not result['company_name'] or result['company_name'] == 'Unknown') and full_attachment_text:
-                    if not result['symbol'] and ('NSE Symbol' in full_attachment_text or 'nse symbol' in full_attachment_text.lower()):
-                        m = re.search(r'NSE\s+Symbol\s*\*?\s*[:\s|]*([A-Z][A-Z0-9]{1,19})', full_attachment_text, re.IGNORECASE)
-                        if not m:
-                            m = re.search(r'NSE\s+Symbol[^*]*\*?\s*[\s|:\n]*\s*([A-Z0-9]{2,20})\s*[\s|]', full_attachment_text, re.IGNORECASE)
-                        if not m:
-                            m = re.search(r'NSE\s+Symbol[^*]*\*?\s*[\s|:]*([A-Z0-9]{2,20})', full_attachment_text, re.IGNORECASE)
-                        if m:
-                            result['symbol'] = m.group(1).strip().upper()
-                            extracted['nse_symbol'] = result['symbol']
-                    if not result['company_name'] or result['company_name'] == 'Unknown':
-                        if 'Name of the Company' in full_attachment_text or 'name of the company' in full_attachment_text.lower():
-                            m = re.search(r'Name\s+of\s+the\s+Company\s*\*?\s*[:\s|]*(.+?)(?=\s*(?:Compliance\s+Officer|SEBI|BSE\s+Script|Registered\s+Office|CIN|Date\s+of|ISIN|Scrip\s+Code|Whether\s+|Regulation|[\n|]|$))', full_attachment_text, re.IGNORECASE)
-                            if not m:
-                                m = re.search(r'Name\s+of\s+the\s+Company[^*]*\*?\s*[\s|:\n]*\s*([^\n|]+?)(?:\s*[\n|]|$)', full_attachment_text, re.IGNORECASE)
-                            if m:
-                                name = m.group(1).strip()
-                                if name and len(name) > 2 and name.upper() not in ('NA', 'N/A', 'NOT LISTED'):
-                                    result['company_name'] = name
-                                    extracted['company_name'] = name
-                result['extracted'] = extracted
-                return jsonify(result)
+                if result and isinstance(result.get('summary'), str):
+                    logger.info(f"[Reg30] Extracted via {model_name} for {symbol}")
+                    break
             except Exception as e:
-                logger.warning(f"Reg30 analyze ({model_name}): {e}")
+                logger.warning(f"[Reg30] Gemini ({model_name}): {e}")
                 continue
-        return jsonify({"error": "Reg30 analysis failed"}), 500
+
+        if not result:
+            return jsonify({"error": "Reg30 analysis failed — Gemini returned no valid JSON"}), 500
+
+        # ── Classify + Validate + Score ────────────────────────────────────────
+        raw_ext    = result.get('extracted') or {}
+        summary    = result.get('summary') or ''
+        confidence = float(result.get('confidence') or 0.5)
+
+        family = _classify_family(summary + ' ' + fallback_text + ' ' + (raw_ext.get('order_type') or ''),
+                                   raw_ext.get('stage'))
+        # Upgrade OTHER if extraction has evidence of a contract
+        if family == 'OTHER' and (
+            raw_ext.get('order_value_cr') or
+            raw_ext.get('stage') in ('L1', 'LOA', 'WO', 'NTP') or
+            raw_ext.get('customer')
+        ):
+            family = 'ORDER_CONTRACT'
+
+        ext, v_issues = _validate_extraction(raw_ext, summary, family)
+        if v_issues:
+            logger.info(f"[Reg30] {symbol} validation: {v_issues}")
+
+        # Resolve end_date → execution_months when Gemini returned an end date
+        if ext.get('_end_date_pending_resolution') and not ext.get('execution_months'):
+            try:
+                end   = datetime.datetime.strptime(str(ext['_end_date_pending_resolution'])[:10], '%Y-%m-%d')
+                start = datetime.datetime.strptime(event_date, '%Y-%m-%d')
+                months = max(1, round((end - start).days / 30.4))
+                if 0 < months <= 600:
+                    ext['execution_months'] = months
+            except Exception:
+                pass
+
+        scoring = _calculate_score(family, ext, confidence)
+
+        resolved_symbol  = (ext.get('nse_symbol') or ext.get('symbol') or symbol or '').strip().upper()
+        resolved_company = (ext.get('company_name') or company_name or 'Unknown').strip()
+
+        # ── Fundamentals enrichment (ORDER events above threshold) ─────────────
+        market_cap_cr = _to_float(ext.get('market_cap_cr')) or None
+        pat_cr        = None
+        networth_cr   = _to_float(ext.get('networth_cr')) or None
+
+        if family in ('ORDER_CONTRACT', 'ORDER_PIPELINE') and scoring['impact_score'] >= 20:
+            enrich_symbol  = resolved_symbol or symbol or company_name
+            enrich_company = resolved_company or company_name
+            model_for_enrich = get_gemini_model_candidates()[0]
+            fund = _enrich_fundamentals(ai_client, model_for_enrich, enrich_symbol, enrich_company, event_date)
+            if fund:
+                mkt = _to_float(fund.get('market_cap_cr')) or None
+                if mkt:
+                    market_cap_cr = mkt
+                    ext['market_cap_cr'] = mkt
+                    prev_score = scoring['impact_score']
+                    scoring = _calculate_score(family, ext, confidence)
+                    if scoring['impact_score'] != prev_score:
+                        logger.info(f"[Reg30] Rescore {resolved_symbol}: {prev_score}→{scoring['impact_score']} (mktcap=Rs.{mkt}Cr)")
+                pat_cr      = _to_float(fund.get('pat_cr')) or None
+                networth_cr = _to_float(fund.get('networth_cr')) or None
+
+        logger.info(
+            f"[Reg30] {resolved_symbol} | family={family} stage={ext.get('stage')} "
+            f"order_cr={ext.get('order_value_cr')} exec_months={scoring.get('execution_months')} "
+            f"mktcap={market_cap_cr} score={scoring['impact_score']} rec={scoring['action_recommendation']}"
+        )
+
+        return jsonify({
+            **result,
+            "symbol":                resolved_symbol,
+            "company_name":          resolved_company,
+            "event_date":            event_date,
+            "event_datetime":        event_datetime,
+            "extracted":             ext,
+            "event_family":          family,
+            "impact_score":          scoring["impact_score"],
+            "direction":             scoring["direction"],
+            "action_recommendation": scoring["action_recommendation"],
+            "scoring_factors":       scoring["scoring_factors"],
+            "conversion_bonus":      scoring.get("conversion_bonus", 0),
+            "execution_months":      scoring.get("execution_months"),
+            "order_type":            scoring.get("order_type"),
+            "market_cap_cr":         market_cap_cr,
+            "pat_cr":                pat_cr,
+            "networth_cr":           networth_cr,
+            "_validation_issues":    v_issues or [],
+            "_proxy_scored":         True,
+        })
     except Exception as e:
         logger.exception("Reg30 analyze error")
         return jsonify({"error": str(e)}), 500
@@ -1580,6 +2107,38 @@ def track_watchlist(stock_list, proxy_key, sid):
         _registry_symbol_map[canonical_symbol(breeze_code)] = std
         # Also map the raw Breeze code directly (e.g. "NIFTY 50" with space)
         _registry_symbol_map[breeze_code.strip().upper()] = std
+        # For NSE equity exchange-quote ticks, there is NO stock_code field — only
+        # symbol="4.1!<token>".  We must resolve the numeric token back to our
+        # canonical frontend symbol.  Use get_stock_token_value() — the SAME method
+        # subscribe_feeds() uses internally — to get the exact token string.
+        # This is more reliable than stock_script_dict_list lookups which can fail
+        # if the Breeze short code doesn't match the dict key format.
+        try:
+            token_info = client.get_stock_token_value(
+                exchange_code="NSE", stock_code=breeze_code, product_type="cash",
+                expiry_date="", strike_price="", right="",
+                get_exchange_quotes=True, get_market_depth=False
+            )
+            eq_token = str(token_info.get("exchange_quotes_token", "") if isinstance(token_info, dict) else "")
+            if eq_token and "!" in eq_token:
+                raw_token = eq_token.split("!", 1)[1]
+                _token_to_std_map[raw_token] = std
+                logger.info(f"[watchlist] Token map: {breeze_code} → {eq_token} → std={std}")
+            else:
+                # Fallback: try stock_script_dict_list directly
+                nse_token = str(client.stock_script_dict_list[1].get(breeze_code, "") or "")
+                if nse_token:
+                    _token_to_std_map[nse_token] = std
+                    logger.info(f"[watchlist] Token map (fallback): {breeze_code} → token={nse_token} → std={std}")
+        except Exception as e:
+            logger.warning(f"[watchlist] Token lookup failed for {breeze_code}: {e}")
+            # Last-resort fallback
+            try:
+                nse_token = str(client.stock_script_dict_list[1].get(breeze_code, "") or "")
+                if nse_token:
+                    _token_to_std_map[nse_token] = std
+            except Exception:
+                pass
 
     # Register this SID for each symbol so _global_on_ticks dispatches to it.
     for symbol in stock_list:
@@ -1651,7 +2210,11 @@ def track_watchlist(stock_list, proxy_key, sid):
             logger.warning(f"Initial quote fetch failed for {symbol}: {e}")
 
     # Keep background task alive while this SID is connected.
-    # Ticks arrive via _global_on_ticks — no polling needed.
+    # WebSocket ticks via _global_on_ticks are the PRIMARY real-time feed.
+    # REST polling is a lightweight fallback ONLY for stocks whose WebSocket ticks
+    # can't be resolved (token map miss). Runs every 10s to keep UI responsive.
+    poll_tick = 0
+    non_nifty = [s for s in stock_list if canonical_symbol(s) != 'NIFTY']
     while True:
         try:
             if not socketio.server.manager.is_connected(sid, '/'):
@@ -1659,7 +2222,22 @@ def track_watchlist(stock_list, proxy_key, sid):
                 break
         except Exception:
             break
-        socketio.sleep(5)
+        poll_tick += 1
+        if poll_tick % 5 == 0:  # every 10 s (5 × 2 s sleep)
+            for symbol in non_nifty:
+                std = canonical_symbol(symbol)
+                breeze_code = get_breeze_symbol(std)
+                try:
+                    res = client.get_quotes(stock_code=breeze_code, exchange_code="NSE", product_type="cash")
+                    raw = normalize_breeze_response(res)
+                    if isinstance(raw, list):
+                        raw = raw[0] if raw else None
+                    if raw and isinstance(raw, dict):
+                        payload = normalize_tick_for_frontend(dict(raw), std)
+                        socketio.emit('watchlist_update', payload, to=sid, namespace='/')
+                except Exception as e:
+                    logger.warning(f"[poll] get_quotes failed for {std}: {e}")
+        socketio.sleep(2)
 
     # SID disconnected: remove from registry (also done in handle_disconnect, but belt-and-suspenders).
     _unregister_sid(sid)
