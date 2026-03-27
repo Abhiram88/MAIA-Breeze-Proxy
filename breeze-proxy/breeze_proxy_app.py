@@ -314,7 +314,12 @@ def normalize_tick_for_frontend(ticks, resolved_symbol):
     `previous_close` per symbol, and use it to recompute `change` and `%` for all
     subsequent WebSocket ticks.
     """
-    last = to_float(ticks.get("last", ticks.get("ltp", ticks.get("last_traded_price", 0))))
+    # BreezeConnect field names differ by tick type:
+    #   Equity (exchange 4): last, change, close, bPrice/sPrice, ttq
+    #   Index  (exchange 3): last_trade_price, absolute_change, previous_close,
+    #                        bid_price/offer_price, total_traded_volume
+    #   REST get_quotes():   ltp, ltp_percent_change, close, best_bid_price, total_quantity_traded
+    last = to_float(ticks.get("last", ticks.get("ltp", ticks.get("last_traded_price", ticks.get("last_trade_price", 0)))))
 
     # REST get_quotes() always includes `ltp_percent_change`; WebSocket ticks never do.
     is_rest_quote = ticks.get("ltp_percent_change") is not None
@@ -340,12 +345,12 @@ def normalize_tick_for_frontend(ticks, resolved_symbol):
             # Fall back to the tick's own values — will be corrected on the next tick after
             # the REST snapshot completes and populates the cache.
             previous_close = to_float(ticks.get("close", ticks.get("previous_close", 0)))
-            change = to_float(ticks.get("change", (last - previous_close) if previous_close else 0))
-            raw_pct = ticks.get("chng_per")
+            change = to_float(ticks.get("change", ticks.get("absolute_change", (last - previous_close) if previous_close else 0)))
+            raw_pct = ticks.get("chng_per") or ticks.get("percentage_change")
             pct = (to_float(raw_pct) if (raw_pct is not None and raw_pct != "")
                    else ((change / previous_close * 100.0) if previous_close else 0.0))
 
-    vol = to_float(ticks.get("ttq", ticks.get("total_quantity_traded", ticks.get("total_volume", ticks.get("volume", 0)))))
+    vol = to_float(ticks.get("ttq", ticks.get("total_quantity_traded", ticks.get("total_traded_volume", ticks.get("total_volume", ticks.get("volume", 0))))))
 
     normalized = dict(ticks)
     normalized.update({
@@ -357,10 +362,10 @@ def normalize_tick_for_frontend(ticks, resolved_symbol):
         "change": change,
         "ltp_percent_change": pct,
         "percent_change": pct,
-        "best_bid_price": to_float(ticks.get("bPrice", ticks.get("best_bid_price", 0))),
-        "best_bid_quantity": to_float(ticks.get("bQty", ticks.get("best_bid_quantity", 0))),
-        "best_offer_price": to_float(ticks.get("sPrice", ticks.get("best_offer_price", 0))),
-        "best_offer_quantity": to_float(ticks.get("sQty", ticks.get("best_offer_quantity", 0))),
+        "best_bid_price": to_float(ticks.get("bPrice", ticks.get("best_bid_price", ticks.get("bid_price", 0)))),
+        "best_bid_quantity": to_float(ticks.get("bQty", ticks.get("best_bid_quantity", ticks.get("bid_quantity", 0)))),
+        "best_offer_price": to_float(ticks.get("sPrice", ticks.get("best_offer_price", ticks.get("offer_price", 0)))),
+        "best_offer_quantity": to_float(ticks.get("sQty", ticks.get("best_offer_quantity", ticks.get("offer_quantity", 0)))),
         "volume": vol,
         "total_quantity_traded": vol,
         "open": to_float(ticks.get("open", 0)),
@@ -383,7 +388,7 @@ def _global_on_ticks(ticks):
     from within the Flask-SocketIO event loop where socketio.emit() works correctly.
     """
     if ticks:
-        logger.info(f"[on_ticks] Tick received: stock_code={ticks.get('stock_code')!r} last={ticks.get('last')!r}")
+        logger.info(f"[on_ticks] Tick received: stock_code={ticks.get('stock_code')!r} symbol={ticks.get('symbol')!r} stock_name={ticks.get('stock_name')!r} last={ticks.get('last')!r} last_trade_price={ticks.get('last_trade_price')!r}")
         _tick_dispatch_queue.put(dict(ticks))
 
 
@@ -393,26 +398,46 @@ def _dispatch_tick(ticks: dict) -> None:
     a watchlist_update event to all subscribed Socket.IO SIDs.
 
     Runs from the _run_tick_dispatcher greenlet — safe to call socketio.emit() here.
+
+    BreezeConnect tick formats (from parse_data in breeze_connect.py):
+      - NSE equity exchange-quote (exchange 4, data_type 1):
+          NO stock_code field. Has symbol="4.1!<token>", stock_name="<company>",
+          last=LTP, change, close (quirky prev-second), bPrice/sPrice, ttq, etc.
+      - Index exchange-quote (exchange 3):
+          stock_code="3.1!NIFTY 50", last_trade_price=LTP, previous_close,
+          absolute_change, percentage_change, total_traded_volume, etc.
+    Resolution order: token_map → registry → stock_name → canonical fallback.
     """
     raw = ticks.get("stock_code") or ""
     if not raw:
-        # Exchange-quote ticks for individual stocks have NO stock_code.
-        # The tick carries symbol="4.1!<token>" — extract the token and look it up.
+        # Exchange-quote ticks for NSE equity have NO stock_code.
+        # The tick carries symbol="4.1!<token>" — extract the token.
         sym_field = str(ticks.get("symbol", ""))
         token_match_sym = re.match(r"^\d+\.?\d*!(.+)$", sym_field)
         if token_match_sym:
             raw = token_match_sym.group(1)  # e.g. "2885"
         else:
-            # Last resort: full company name in stock_name (rarely useful)
             raw = ticks.get("stock_name", "")
     else:
-        # stock_code may itself be a token string like "4.1!NIFTY"
+        # stock_code may be a token string like "3.1!NIFTY 50" (index ticks)
         token_match = re.match(r"^\d+\.?\d*!(.+)$", str(raw))
         if token_match:
             raw = token_match.group(1)
 
-    # Resolve: try _token_to_std_map first (numeric token), then _registry_symbol_map
-    resolved = _token_to_std_map.get(raw) or _registry_symbol_map.get(canonical_symbol(raw)) or canonical_symbol(raw)
+    # Resolve the raw identifier to a canonical frontend symbol.
+    # 1. _token_to_std_map: numeric token → symbol (e.g. "2885" → "RELIANCE")
+    # 2. _registry_symbol_map: canonical form → symbol (e.g. "NIFTY" → "NIFTY")
+    # 3. stock_name fallback: BreezeConnect enriches ticks with stock_name
+    #    (e.g. "Nifty 50" → canonical "NIFTY"). This is essential when the
+    #    token map isn't populated — it was the ONLY resolution path before
+    #    the token map was added.
+    stock_name = str(ticks.get("stock_name", ""))
+    resolved = (
+        _token_to_std_map.get(raw)
+        or _registry_symbol_map.get(canonical_symbol(raw))
+        or _registry_symbol_map.get(canonical_symbol(stock_name))
+        or canonical_symbol(raw)
+    )
     payload = normalize_tick_for_frontend(ticks, resolved)
 
     targets = list(_tick_registry.get(resolved, set()))
