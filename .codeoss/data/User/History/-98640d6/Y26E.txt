@@ -1,4 +1,0 @@
-flask
-breeze_connect
-google-cloud-secret-manager
-pytz
